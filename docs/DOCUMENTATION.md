@@ -34,6 +34,7 @@ Kemper is a single file, `kemper.pyw`. There's no installer: put it in a folder 
 1. Install the window's library: `python -m pip install pywebview`
 2. Double-click `kemper.pyw`.
 3. To have Kemper running every time you sign in, turn on **Start with Windows** in the window.
+4. To get Kemper's icon on your desktop, turn on **Desktop shortcut**. Windows always draws a `.pyw` file with Python's icon, and a script can't carry an icon of its own, so Kemper puts its icon on a shortcut instead.
 
 **Command line only:** pywebview isn't needed. Use `python kemper.pyw --cli` to run Kemper in a terminal, and `python kemper.pyw --autostart on` to start it with Windows. If pywebview is missing, Kemper still runs your shortcuts at sign-in, just without a window.
 
@@ -48,6 +49,7 @@ Open it by running `kemper.pyw` (double-click works), or with `python kemper.pyw
 | **Deactivate / Activate** | Turns every shortcut off or back on. Kemper stays running, and the choice is remembered after a restart |
 | **Quit** | Stops Kemper completely. Shortcuts stop working until you start it again |
 | **Start with Windows** | Starts Kemper, hidden, every time you sign in to Windows |
+| **Desktop shortcut** | Puts a *Kemper* shortcut, with Kemper's icon, on your desktop. Double-clicking it opens Kemper |
 | **Appearance** | System follows your Windows light or dark setting as it changes. Light and Dark force one look |
 | **Quick picker** switch | Turns the [quick picker](#quick-picker) on or off |
 | **Open it with** | The quick picker's combo. Click it and press new keys to change it. Default: Ctrl + Alt + K |
@@ -93,7 +95,7 @@ Runs Kemper in the terminal with no window. It logs each shortcut as you use it 
 
 ```console
 > python kemper.pyw --cli
-Kemper 1.0.0 is running in this terminal (no window).
+Kemper 2.0.0 is running in this terminal (no window).
   2 shortcut(s) active. Each one shows up here when you use it.
   Press Ctrl+C to stop.
 
@@ -153,7 +155,7 @@ Turns all shortcuts on or off without quitting Kemper. This is the same as the b
 
 ```console
 > python kemper.pyw --status
-Kemper 1.0.0
+Kemper 2.0.0
   Running:             yes
   Shortcuts:           2 (active)
   Quick picker:        Ctrl + Alt + K
@@ -185,6 +187,15 @@ Starts Kemper when you sign in to Windows, or stops doing so. This is the same a
 ```console
 > python kemper.pyw --autostart on
 Kemper will start when you sign in to Windows.
+```
+
+### `--desktop on|off`
+
+Adds or removes the desktop shortcut with Kemper's icon. This is the same as the **Desktop shortcut** switch.
+
+```console
+> python kemper.pyw --desktop on
+Added Kemper to your desktop (C:\Users\you\Desktop\Kemper.lnk).
 ```
 
 ### `--uninstall`
@@ -271,8 +282,8 @@ python kemper.pyw --uninstall
 
 After you confirm, Kemper:
 1. stops the running Kemper,
-2. removes its Windows startup entry,
-3. deletes `%APPDATA%\Kemper` (your shortcuts and settings),
+2. removes its Windows startup entry and its desktop shortcut,
+3. deletes `%APPDATA%\Kemper` (your shortcuts, settings and Kemper's icon file),
 4. deletes `kemper.pyw` itself.
 
 It touches nothing else. pywebview stays installed because other programs may use it; remove it with `python -m pip uninstall pywebview` if you like. Add `--yes` to skip the confirmation.
@@ -293,6 +304,7 @@ Kemper is one Python file with no dependencies beyond the standard library and p
 - **Typing.** When a combo fires, Kemper first taps an unassigned key, so releasing Alt doesn't open the app's menu bar. That's the same trick AutoHotkey uses. Kemper then waits until you let go of the modifier keys and types the text with [`SendInput`](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-sendinput) in Unicode mode, which doesn't depend on the keyboard layout. Characters outside the basic plane, such as emoji, are sent as UTF-16 surrogate pairs.
 - **Window.** The interface is HTML/CSS/JS kept inside `kemper.pyw` and shown with pywebview, which uses Edge WebView2. The page calls into Python through pywebview's JS bridge, and the title bar follows dark mode through DWM.
 - **One instance, and CLI control.** The running Kemper listens on `127.0.0.1:47321` for a few one-word commands: `show`, `quit`, `reload`, `ping`. That's how a second launch shows the window and how CLI changes reach a running Kemper. It only accepts connections from your own PC.
+- **Icon.** Kemper's icon is stored inside `kemper.pyw` as PNG data. At startup it's written to `%APPDATA%\Kemper\kemper.ico`, because the window title bar and the desktop shortcut need a real file. Kemper also gives itself its own taskbar identity (an AppUserModelID), so the taskbar shows its icon instead of Python's.
 - **Quick picker.** A second, borderless window that's created hidden and registered under its own hotkey. When the combo fires, Kemper remembers which window had focus, puts the panel by the mouse and shows it. When you pick, Kemper hides the panel, gives focus back to that window and types the text there, the same way as a normal shortcut.
 - **Settings** are validated on the Python side before saving, whatever the UI or CLI sent.
 

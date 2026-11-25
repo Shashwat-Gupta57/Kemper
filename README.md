@@ -1,4 +1,6 @@
-# Kemper
+<p align="center"><img src="docs/images/icon.png" alt="Kemper's icon: a phi-like glyph inside an open circle" width="128"></p>
+
+<h1 align="center">Kemper</h1>
 
 **Kemper** (short for **Key Mapper**) types a character or a piece of text when you press a key combo, in any app on Windows.
 
@@ -23,6 +25,7 @@ Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Pre
 - **Catches clashes.** If two shortcuts use the same keys, both turn red and Kemper won't save until you fix them.
 - **Light and dark mode.** Follows Windows, or pick one yourself.
 - **Starts with Windows** if you want, and runs quietly in the background. Closing the window doesn't stop it.
+- **Desktop shortcut** with Kemper's own icon, one switch away.
 - **Deactivate** turns every shortcut off without quitting.
 - **Full command line.** Run it with no window, and add, remove, list and check shortcuts from a terminal.
 - **One file.** The whole program is [`kemper.pyw`](kemper.pyw).
@@ -39,7 +42,9 @@ You need **Windows 10 or 11** and **[Python 3.10 or newer](https://www.python.or
    ```
 
 3. Double-click `kemper.pyw`. The window opens.
-4. Turn on **Start with Windows** in the window if you want Kemper running every time you sign in.
+4. In the window, turn on:
+   - **Start with Windows** to have Kemper running every time you sign in.
+   - **Desktop shortcut** to get a Kemper icon on your desktop. Windows always shows a `.pyw` file with Python's icon; the shortcut carries Kemper's.
 
 Only using the command line? You can skip pywebview. See [From the command line](#from-the-command-line).
 
@@ -108,7 +113,7 @@ Run Kemper with no window at all. Every shortcut you use is logged as it happens
 
 ```console
 > python kemper.pyw --cli
-Kemper 1.0.0 is running in this terminal (no window).
+Kemper 2.0.0 is running in this terminal (no window).
   2 shortcut(s) active. Each one shows up here when you use it.
   Press Ctrl+C to stop.
 
@@ -120,7 +125,7 @@ Something not working? `--doctor` checks everything and tells you how to fix eac
 
 ```console
 > python kemper.pyw --doctor
-Kemper 1.0.0 doctor
+Kemper 2.0.0 doctor
 
   ✓  Python 3.12.10
   ✓  pywebview 6.2.1 is installed (needed for the window)
@@ -146,6 +151,7 @@ All commands:
 | `--picker COMBO` / `on` / `off` | Set the quick picker's combo, or turn it on or off |
 | `--activate` / `--deactivate` | Turn all shortcuts on or off |
 | `--autostart on` / `off` | Start Kemper when you sign in to Windows, or stop doing so |
+| `--desktop on` / `off` | Add or remove the desktop shortcut with Kemper's icon |
 | `--status` | Is Kemper running? Where are its files? |
 | `--doctor` | Find problems and say how to fix them |
 | `--show` | Open the window of the running Kemper |
@@ -170,7 +176,11 @@ All commands:
 python kemper.pyw --uninstall
 ```
 
-This asks you to confirm, then stops Kemper, removes it from Windows startup, deletes your shortcuts and settings, and deletes `kemper.pyw` itself. It changes nothing else on your PC. Add `--yes` to skip the question.
+This asks you to confirm, then:
+- stops Kemper
+- removes it from Windows startup and the desktop
+- deletes your shortcuts and settings
+- deletes `kemper.pyw` itself It changes nothing else on your PC. Add `--yes` to skip the question.
 
 ## Documentation
 

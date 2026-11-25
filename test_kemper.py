@@ -68,6 +68,12 @@ for bad in ("Hyper+2", "Alt+", "Alt+Banana", "F25", ""):
 # --- CLI, against a throwaway settings folder ---
 env = {**os.environ, "APPDATA": tempfile.mkdtemp(), "PYTHONIOENCODING": "utf-8"}
 
+# --- icon: the embedded PNGs become a valid .ico (header: reserved 0, type 1, one entry per size) ---
+k.CONFIG = os.path.join(env["APPDATA"], "Kemper", "mappings.json")
+ico = open(k.icon_path(), "rb").read()
+assert ico[:4] == b"\0\0\1\0" and int.from_bytes(ico[4:6], "little") == len(k.ICON_PNGS)
+assert ico[6 + 16 * len(k.ICON_PNGS):][:8] == b"\x89PNG\r\n\x1a\n"
+
 def cli(*args):
     r = subprocess.run([sys.executable, PROGRAM, *args], env=env, capture_output=True, text=True, encoding="utf-8")
     return r.returncode, r.stdout + r.stderr
