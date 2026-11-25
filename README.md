@@ -2,6 +2,8 @@
 
 <h1 align="center">Kemper</h1>
 
+<p align="center"><a href="https://kemper.talken.in"><b>kemper.talken.in</b></a> · <a href="https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw">Download</a> · <a href="docs/DOCUMENTATION.md">Documentation</a></p>
+
 **Kemper** (short for **Key Mapper**) types a character or a piece of text when you press a key combo, in any app on Windows.
 
 Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Press **Ctrl + Alt + E** and get **€**. You choose the combos and the text. Can't remember them all? Press **Ctrl + Alt + K** to pick from a list, like **Win + V** does for the clipboard.

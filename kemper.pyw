@@ -8,7 +8,7 @@ import argparse, base64, ctypes, json, os, re, shutil, socket, struct, subproces
 from ctypes import wintypes
 
 APP = "Kemper"
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 CONFIG = os.path.join(os.environ.get("APPDATA", "."), APP, "mappings.json")
 EDITOR_TITLE = "Kemper Keypack Editor"
 KEYPACK_EXT = ".kmppck"

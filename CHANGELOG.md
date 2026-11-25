@@ -2,6 +2,14 @@
 
 All notable changes to Kemper are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.0.1] - 2026-11-25
+
+### Added
+- Kemper's website, [kemper.talken.in](https://kemper.talken.in). It's built from `web/` and published to GitHub Pages on every push. Its screenshots and AI instructions come straight from `docs/`, so they always match the app.
+
+### Removed
+- An unused screenshot.
+
 ## [3.0.0] - 2026-11-25
 
 Keypacks: shareable sets of shortcuts.
@@ -64,6 +72,7 @@ First public release. Kemper is rebuilt around a new window, a full command line
 
 - First version: map key combos to text in a tkinter window, with conflicts marked in red and start with Windows.
 
+[3.0.1]: https://github.com/Shashwat-Gupta57/Kemper/compare/v3.0.0...main
 [3.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.0.0
 [2.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Shashwat-Gupta57/Kemper/commit/89c2d7b
