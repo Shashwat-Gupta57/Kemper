@@ -10,6 +10,9 @@ from ctypes import wintypes
 APP = "Kemper"
 VERSION = "1.0.0"
 CONFIG = os.path.join(os.environ.get("APPDATA", "."), APP, "mappings.json")
+PICKER_TITLE = "Kemper Picker"
+PICKER_ID = 0xB000  # hotkey id of the quick picker; shortcut ids are 1..n
+DEFAULT_PICKER = {"enabled": True, "mods": ["Ctrl", "Alt"], "vk": 0x4B, "key": "K"}
 PORT = 47321  # single-instance socket; a second launch just tells the first to show its window
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -89,8 +92,18 @@ def find_conflicts(rows):
     ids = [combo_id(r) for r in rows if r["vk"]]
     return {i for i in ids if ids.count(i) > 1}
 
-def clean_mappings(rows):
-    """Validate mappings coming from the UI; raises ValueError so a bad config is never saved."""
+def clean_picker(p):
+    """Validate the quick picker's settings; raises ValueError."""
+    names = {n for n, _, _ in MODS}
+    if not (isinstance(p, dict) and isinstance(p.get("enabled"), bool) and isinstance(p.get("mods"), list)
+            and set(p["mods"]) <= names and isinstance(p.get("vk"), int) and 0 < p["vk"] < 255
+            and isinstance(p.get("key"), str) and p["key"]):
+        raise ValueError("The quick picker needs a key combo.")
+    return {"enabled": p["enabled"], "mods": sorted(set(p["mods"]), key=[n for n, _, _ in MODS].index),
+            "vk": p["vk"], "key": p["key"]}
+
+def clean_mappings(rows, picker=None):
+    """Validate mappings coming from the UI or CLI; raises ValueError so a bad config is never saved."""
     names = {n for n, _, _ in MODS}
     out = []
     for r in rows:
@@ -101,6 +114,8 @@ def clean_mappings(rows):
         out.append({"mods": sorted(set(mods), key=[n for n, _, _ in MODS].index), "vk": vk, "key": key, "text": text})
     if find_conflicts(out):
         raise ValueError("Two or more shortcuts use the same keys.")
+    if picker and picker["enabled"] and combo_id(picker) in {combo_id(m) for m in out}:
+        raise ValueError(f"{combo_label(picker)} opens the quick picker, so a shortcut can't use it too.")
     return out
 
 def load():
@@ -112,7 +127,7 @@ def load():
     if isinstance(data, list):  # v1 config was a bare list
         data = {"mappings": data}
     return {"mappings": data.get("mappings", []), "appearance": data.get("appearance", "system"),
-            "active": data.get("active", True)}
+            "active": data.get("active", True), "picker": {**DEFAULT_PICKER, **data.get("picker", {})}}
 
 def save(cfg):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
@@ -126,25 +141,32 @@ def hotkey_flags(m):
 
 class Listener(threading.Thread):
     """Owns the global hotkeys. RegisterHotKey ties them to this thread's message queue."""
-    def __init__(self, rows, on_fire=None):
+    def __init__(self, rows, on_fire=None, picker=None, on_picker=None):
         super().__init__(daemon=True)
         self.rows, self.on_fire, self.failed, self.ready = rows, on_fire, [], threading.Event()
+        self.picker, self.on_picker = picker, on_picker
 
     def run(self):
         self.tid = kernel32.GetCurrentThreadId()
         for i, m in enumerate(self.rows):
             if not user32.RegisterHotKey(None, i + 1, hotkey_flags(m), m["vk"]):
                 self.failed.append(combo_label(m))
+        if self.picker and not user32.RegisterHotKey(None, PICKER_ID, hotkey_flags(self.picker), self.picker["vk"]):
+            self.failed.append(combo_label(self.picker) + " (quick picker)")
         self.ready.set()
         msg = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            if msg.message == WM_HOTKEY and 0 < msg.wParam <= len(self.rows):
+            if msg.message == WM_HOTKEY and msg.wParam == PICKER_ID and self.on_picker:
+                # own thread: opening the popup waits on the UI thread, which may be waiting on us
+                threading.Thread(target=self.on_picker, daemon=True).start()
+            elif msg.message == WM_HOTKEY and 0 < msg.wParam <= len(self.rows):
                 m = self.rows[msg.wParam - 1]
                 type_text(m["text"])
                 if self.on_fire:
                     self.on_fire(m)
         for i in range(len(self.rows)):
             user32.UnregisterHotKey(None, i + 1)
+        user32.UnregisterHotKey(None, PICKER_ID)
 
     def stop(self):
         user32.PostThreadMessageW(self.tid, WM_QUIT, 0, 0)
@@ -187,10 +209,17 @@ def os_is_dark():
 
 user32.FindWindowExW.restype = wintypes.HWND
 
-def own_window():
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.MonitorFromPoint.argtypes = (wintypes.POINT, wintypes.DWORD)
+user32.MonitorFromPoint.restype = wintypes.HANDLE
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+def own_window(title=APP):
     """Our top-level window. Matches by process too, since e.g. an Explorer folder can also be titled 'Kemper'."""
     hwnd = None
-    while hwnd := user32.FindWindowExW(None, hwnd, None, APP):
+    while hwnd := user32.FindWindowExW(None, hwnd, None, title):
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if pid.value == os.getpid():
@@ -203,6 +232,24 @@ def dark_title_bar(dark):
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4)  # DWMWA_USE_IMMERSIVE_DARK_MODE
         user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x27)  # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER: repaint the title bar
 
+def place_popup(hwnd):
+    """Style the picker as a popup (no taskbar button, round corners) and put it by the mouse, on screen."""
+    ex = user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+    user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # +WS_EX_TOOLWINDOW, -WS_EX_APPWINDOW
+    round_ = ctypes.c_int(2)  # DWMWCP_ROUND, Windows 11 only; ignored elsewhere
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(round_), 4)
+    pt = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    r = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    w, h = r.right - r.left, r.bottom - r.top
+    mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    user32.GetMonitorInfoW(user32.MonitorFromPoint(pt, 2), ctypes.byref(mi))  # MONITOR_DEFAULTTONEAREST
+    wa = mi.rcWork
+    x = min(max(pt.x - w // 2, wa.left), wa.right - w)
+    y = min(max(pt.y - 40, wa.top), wa.bottom - h)
+    user32.SetWindowPos(hwnd, -1, x, y, 0, 0, 0x11)  # HWND_TOPMOST, SWP_NOSIZE|SWP_NOACTIVATE
+
 # ---------- engine, shared by the window and --cli ----------
 class Api:
     """Methods here are callable from JS as window.pywebview.api.<name>. Underscored attrs stay private."""
@@ -211,6 +258,9 @@ class Api:
         self._listener = None
         self._lock = threading.Lock()
         self._window = None
+        self._picker = None  # the quick picker popup; only exists when the window version runs
+        self._picker_open = False
+        self._picker_target = None  # the app that had focus when the picker opened
         self._quitting = False
         self._notice = ""
         self._on_fire, self._on_reload = on_fire, on_reload
@@ -221,7 +271,8 @@ class Api:
         with self._lock:
             if self._listener or not self._cfg["active"]:
                 return
-            self._listener = Listener([dict(m) for m in self._cfg["mappings"]], self._on_fire)
+            picker = self._cfg["picker"] if self._picker and self._cfg["picker"]["enabled"] else None
+            self._listener = Listener([dict(m) for m in self._cfg["mappings"]], self._on_fire, picker, self._open_picker)
             self._listener.start()
             self._listener.ready.wait(2)
             failed = self._listener.failed
@@ -253,16 +304,17 @@ class Api:
         # Hotkeys are paused while recording so pressing an existing combo doesn't type its text.
         self._stop() if on else self._start()
 
-    def save(self, rows):
+    def save(self, rows, picker=None):
         try:
-            mappings = clean_mappings(rows)
+            picker = clean_picker(picker) if picker is not None else self._cfg["picker"]
+            mappings = clean_mappings(rows, picker)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        self._cfg["mappings"] = mappings
+        self._cfg["mappings"], self._cfg["picker"] = mappings, picker
         save(self._cfg)
         self._stop()
         self._start()
-        return {"ok": True, "mappings": mappings, "notice": self._notice}
+        return {"ok": True, "mappings": mappings, "picker": picker, "notice": self._notice}
 
     def set_startup(self, on):
         try:
@@ -291,12 +343,59 @@ class Api:
         self._done.set()
         if self._window:
             threading.Timer(2, os._exit, (0,)).start()  # backstop: Quit must always end the process
+            if self._picker:
+                self._picker.destroy()
             self._window.destroy()
 
     def _on_closing(self):
         if self._quitting:
             return True
         self._window.hide()  # closing only hides; hotkeys keep working
+        return False
+
+    # --- quick picker (like Win+V for the clipboard, but for your shortcuts) ---
+    def _open_picker(self):
+        if not self._picker:
+            return
+        if self._picker_open:  # the picker combo again closes it
+            return self.close_picker(True)
+        self._picker_target = user32.GetForegroundWindow()
+        self._picker.evaluate_js("openPicker()")
+        hwnd = own_window(PICKER_TITLE)
+        if hwnd:
+            place_popup(hwnd)
+        self._picker.show()
+        if hwnd:
+            user32.SetForegroundWindow(hwnd)  # allowed: we just received the hotkey
+        self._picker_open = True
+
+    def picker_items(self):
+        a = self._cfg["appearance"]
+        return {"items": [{"i": i, "text": m["text"], "label": combo_label(m)} for i, m in enumerate(self._cfg["mappings"])],
+                "dark": a == "dark" or (a == "system" and os_is_dark())}
+
+    def close_picker(self, refocus=False):
+        if not (self._picker and self._picker_open):
+            return
+        self._picker_open = False
+        self._picker.hide()
+        if refocus and self._picker_target:
+            user32.SetForegroundWindow(self._picker_target)
+
+    def pick(self, i):
+        maps, i = self._cfg["mappings"], int(i)
+        if not 0 <= i < len(maps):
+            return
+        self.close_picker(True)
+        time.sleep(0.15)  # let the target app take focus before typing into it
+        type_text(maps[i]["text"])
+        if self._on_fire:
+            self._on_fire(maps[i])
+
+    def _on_picker_closing(self):
+        if self._quitting:
+            return True
+        self.close_picker(True)  # Alt+F4 on the popup just hides it
         return False
 
 # ---------- single instance: the running Kemper listens on a local port for commands ----------
@@ -397,6 +496,7 @@ examples:
   python kemper.pyw --add "Alt+2" "²"         Alt+2 types ²
   python kemper.pyw --add "Alt+Shift+2" "₂"   Alt+Shift+2 types ₂
   python kemper.pyw --remove "Alt+2"
+  python kemper.pyw --picker "Ctrl+Alt+P"     the quick picker opens with Ctrl+Alt+P
   python kemper.pyw --keys
   python kemper.pyw --doctor
 """
@@ -411,13 +511,15 @@ def build_parser():
     g.add_argument("--keys", action="store_true", help="list your shortcuts")
     g.add_argument("--add", nargs=2, metavar=("COMBO", "TEXT"), help='add a shortcut, e.g. --add "Alt+2" "²"')
     g.add_argument("--remove", metavar="COMBO", help='remove a shortcut, e.g. --remove "Alt+2"')
+    g.add_argument("--picker", metavar="COMBO|on|off", help='set the quick picker\'s combo, e.g. --picker "Ctrl+Alt+K", or turn it on/off')
     g.add_argument("--activate", action="store_true", help="turn shortcuts on")
     g.add_argument("--deactivate", action="store_true", help="turn every shortcut off without quitting Kemper")
     g.add_argument("--status", action="store_true", help="show whether Kemper is running and how it is set up")
     g.add_argument("--doctor", action="store_true", help="check for problems and say how to fix each one")
     g.add_argument("--show", action="store_true", help="open the window (starts Kemper if it isn't running)")
     g.add_argument("--quit", action="store_true", help="stop the running Kemper, window or --cli")
-    g.add_argument("--install", action="store_true", help="start Kemper with Windows, and start it now")
+    g.add_argument("--autostart", choices=["on", "off"],
+                   help="start Kemper when you sign in to Windows, or stop doing so (same as the switch in the window)")
     g.add_argument("--uninstall", action="store_true",
                    help="remove Kemper from this PC: stop it, remove it from startup, delete your settings and this file")
     g.add_argument("--hidden", action="store_true", help="open with the window hidden (used when Windows starts)")
@@ -437,25 +539,31 @@ def change_config(change):
     cfg = load()
     change(cfg)
     try:
-        cfg["mappings"] = clean_mappings(cfg["mappings"])
+        cfg["picker"] = clean_picker(cfg["picker"])
+        cfg["mappings"] = clean_mappings(cfg["mappings"], cfg["picker"])
     except ValueError as e:
         fail(f"{e} Nothing was saved. Run --doctor for details.")
     save(cfg)
     if send_command(b"reload"):
         print("The running Kemper picked up the change.")
 
+def picker_line(cfg):
+    p = cfg["picker"]
+    return f"Quick picker: {combo_label(p)}" if p["enabled"] else "Quick picker: off"
+
 def cmd_keys():
     cfg = load()
     maps = cfg["mappings"]
     if not maps:
         print('No shortcuts yet. Add one with:  python kemper.pyw --add "Alt+2" "²"')
+        print(picker_line(cfg))
         return
     dup = find_conflicts(maps)
     width = max(len(combo_label(m)) for m in maps)
     for m in maps:
         flag = "   ✗ same keys as another shortcut" if combo_id(m) in dup else ""
         print(f"  {combo_label(m):<{width}}  →  {one_line(m['text'])}{flag}")
-    print(f"\n{len(maps)} shortcut(s), {'active' if cfg['active'] else 'deactivated'}.")
+    print(f"\n{len(maps)} shortcut(s), {'active' if cfg['active'] else 'deactivated'}. {picker_line(cfg)}")
 
 def cmd_add(combo, text):
     try:
@@ -467,6 +575,10 @@ def cmd_add(combo, text):
     m["text"] = text
 
     def change(cfg):
+        p = cfg["picker"]
+        if p["enabled"] and combo_id(p) == combo_id(m):
+            fail(f"{combo_label(m)} opens the quick picker. Use other keys, or move the picker first:  "
+                 f'python kemper.pyw --picker "Ctrl+Alt+P"')
         for old in cfg["mappings"]:
             if combo_id(old) == combo_id(m):
                 fail(f"{combo_label(m)} already types {one_line(old['text'])}. "
@@ -489,6 +601,20 @@ def cmd_remove(combo):
     change_config(change)
     print(f"Removed {combo}.")
 
+def cmd_picker(value):
+    v = value.strip().lower()
+
+    def change(cfg):
+        if v in ("on", "off"):
+            cfg["picker"]["enabled"] = v == "on"
+            return
+        try:
+            cfg["picker"].update(parse_combo(value), enabled=True)
+        except ValueError as e:
+            fail(e)
+    change_config(change)
+    print(picker_line(load()))
+
 def cmd_set_active(on):
     change_config(lambda cfg: cfg.update(active=on))
     print("Shortcuts are on." if on else "Shortcuts are off. Turn them back on with:  python kemper.pyw --activate")
@@ -499,6 +625,7 @@ def cmd_status():
     print(f"Kemper {VERSION}")
     print(f"  Running:             {'yes' if running else 'no'}")
     print(f"  Shortcuts:           {len(cfg['mappings'])} ({'active' if cfg['active'] else 'deactivated'})")
+    print(f"  {picker_line(cfg).replace(': ', ':        ')}")
     print(f"  Start with Windows:  {'on' if startup_enabled() else 'off'}")
     print(f"  Settings file:       {CONFIG}")
     print(f"  Program file:        {os.path.abspath(__file__)}")
@@ -548,7 +675,7 @@ def cmd_doctor():
         try:
             with open(CONFIG, encoding="utf-8") as f:
                 json.load(f)
-            clean_mappings(cfg["mappings"])
+            clean_mappings(cfg["mappings"], clean_picker(cfg["picker"]))
             check(0, f"{len(cfg['mappings'])} shortcut(s) saved in {CONFIG}")
         except ValueError as e:
             check(2, f"Settings file has a problem: {e} ({CONFIG})")
@@ -561,16 +688,17 @@ def cmd_doctor():
 
     sv = startup_value()
     if sv is None:
-        check(1, "Kemper doesn't start with Windows. Fix:  python kemper.pyw --install")
+        check(1, "Kemper doesn't start with Windows. Fix:  python kemper.pyw --autostart on")
     elif sv == startup_cmd():
         check(0, "Starts with Windows")
     else:
-        check(2, "The Windows startup entry points to a different place (was Kemper moved?). Fix:  python kemper.pyw --install")
+        check(2, "The Windows startup entry points to a different place (was Kemper moved?). Fix:  python kemper.pyw --autostart on")
 
     if running:
         check(0, "Skipped the hotkey check because the running Kemper is holding them")
     else:
-        taken = [combo_label(m) for m in cfg["mappings"] if not hotkey_free(m)]
+        combos = cfg["mappings"] + ([cfg["picker"]] if cfg["picker"]["enabled"] else [])
+        taken = [combo_label(m) for m in combos if not hotkey_free(m)]
         check(2 if taken else 0, ("Already used by another app: " + ", ".join(taken) + ". Pick different keys for these.")
               if taken else "No other app is using your combos")
 
@@ -600,6 +728,8 @@ def run_cli():
         print("  Kemper is deactivated, so shortcuts do nothing. Turn them on with:  python kemper.pyw --activate")
     if api._notice:
         print("  " + api._notice)
+    if cfg["picker"]["enabled"]:
+        print("  The quick picker needs the window version, so it's off in this mode.")
     print("  Press Ctrl+C to stop.\n", flush=True)
     try:
         while not api._done.wait(0.5):  # short waits keep Ctrl+C responsive
@@ -621,19 +751,9 @@ def cmd_show():
 def cmd_quit():
     print("Kemper stopped." if send_command(b"quit") else "Kemper isn't running.")
 
-def cmd_install():
-    set_startup(True)
-    print("Kemper will start with Windows.")
-    try:
-        import webview  # noqa: F401
-    except ImportError:
-        print("pywebview isn't installed, so the window can't open yet. Fix:  python -m pip install pywebview")
-        return
-    if send_command(b"ping"):
-        print("It's already running.")
-    else:
-        start_gui_process()
-        print("Started Kemper.")
+def cmd_autostart(on):
+    set_startup(on)
+    print("Kemper will start when you sign in to Windows." if on else "Kemper won't start with Windows anymore.")
 
 def cmd_uninstall(yes):
     me = os.path.abspath(__file__)
@@ -667,7 +787,17 @@ def run_gui(hidden):
     if not srv:  # already running: bring that window up instead
         send_command(b"show")
         return
-    import webview  # imported here so the CLI works without it
+    try:
+        import webview  # imported here so the CLI works without it
+    except ImportError:
+        if hidden:  # started with Windows but can't draw a window: still run the shortcuts
+            api = Api()
+            serve(srv, api)
+            api._done.wait()
+            return
+        user32.MessageBoxW(None, "Kemper's window needs pywebview. Install it with:\n\n    python -m pip install pywebview\n\n"
+                                 "Or use Kemper without a window:\n\n    python kemper.pyw --cli", APP, 0x10)
+        return
     api = Api()
     serve(srv, api)
     cfg = api._cfg
@@ -677,6 +807,13 @@ def run_gui(hidden):
     api._window = win
     win.events.closing += api._on_closing
     win.events.shown += lambda: dark_title_bar(dark)
+    picker = webview.create_window(PICKER_TITLE, html=PICKER_HTML, js_api=api, width=380, height=460, hidden=True,
+                                   frameless=True, easy_drag=False, on_top=True, resizable=False,
+                                   background_color="#1C1C1E" if dark else "#FFFFFF", text_select=True)
+    api._picker = picker
+    picker.events.closing += api._on_picker_closing
+    api._stop()  # restart the hotkeys now that the picker exists, so its combo gets registered
+    api._start()
     webview.start()
 
 def main():
@@ -692,6 +829,8 @@ def main():
         cmd_add(*a.add)
     elif a.remove:
         cmd_remove(a.remove)
+    elif a.picker:
+        cmd_picker(a.picker)
     elif a.activate or a.deactivate:
         cmd_set_active(a.activate)
     elif a.status:
@@ -702,8 +841,8 @@ def main():
         cmd_show()
     elif a.quit:
         cmd_quit()
-    elif a.install:
-        cmd_install()
+    elif a.autostart:
+        cmd_autostart(a.autostart == "on")
     elif a.uninstall:
         cmd_uninstall(a.yes)
     else:
@@ -787,6 +926,7 @@ UI_HTML = r'''<!doctype html>
   .pill.empty { color: var(--blue); }
   .pill.recording { background: var(--blue); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
   .pill.bad { background: var(--red); color: #fff; }
+  .pill:disabled { opacity: .4; cursor: default; }
   @keyframes pulse { 50% { opacity: .72; } }
   .text { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 20px;
     padding: 6px 0; user-select: text; -webkit-user-select: text; }
@@ -840,6 +980,19 @@ UI_HTML = r'''<!doctype html>
     </div>
   </div>
 
+  <div class="section-title">Quick Picker</div>
+  <div class="card">
+    <div class="row">
+      <div class="label">Quick picker</div>
+      <label class="switch"><input type="checkbox" id="pickerOn" aria-label="Quick picker"><span></span></label>
+    </div>
+    <div class="row" id="pickerRow">
+      <div class="label">Open it with</div>
+      <button class="pill" id="pickerPill"></button>
+    </div>
+  </div>
+  <div class="section-foot">Press it in any app to see all your shortcuts and pick one, like Win + V does for the clipboard.</div>
+
   <div class="section-title">Key → Text</div>
   <div class="card" id="list"></div>
   <div class="section-foot" id="hint">Click a key box, then press the combo, like Alt + 2. Paste or type the text it should produce, like ².</div>
@@ -850,7 +1003,7 @@ UI_HTML = r'''<!doctype html>
 </footer>
 
 <script>
-let api, rows = [], saved = "[]", notice = "", recording = null, appearance = "system", active = true;
+let api, rows = [], picker = null, saved = "", notice = "", recording = null, appearance = "system", active = true;
 const $ = s => document.querySelector(s);
 const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
 const MOD_KEYS = ["Control", "Alt", "Shift", "Meta", "AltGraph", "OS"];
@@ -858,9 +1011,10 @@ const media = matchMedia("(prefers-color-scheme: dark)");
 
 const id = r => [...r.mods].sort().join("+") + "|" + r.vk;
 const label = r => [...r.mods].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).concat(r.key).join(" + ");
+const snapshot = () => JSON.stringify({ rows, picker });
 const conflicts = () => {
   const n = {};
-  rows.filter(r => r.vk).forEach(r => n[id(r)] = (n[id(r)] || 0) + 1);
+  rows.filter(r => r.vk).concat(picker?.enabled ? [picker] : []).forEach(r => n[id(r)] = (n[id(r)] || 0) + 1);
   return new Set(Object.keys(n).filter(k => n[k] > 1));
 };
 
@@ -910,12 +1064,21 @@ function validate() {
     pill.textContent = recording === i ? "Press keys…" : r.vk ? label(r) : "Set keys";
     pill.title = recording === i ? "Press a key combo · Esc to cancel" : "Click to change";
   });
+  if (picker) {
+    const pill = $("#pickerPill"), bad = picker.enabled && dup.has(id(picker));
+    $("#pickerRow").classList.toggle("bad", bad);
+    $("#pickerOn").checked = picker.enabled;
+    pill.disabled = !picker.enabled;
+    pill.className = "pill" + (recording === "picker" ? " recording" : bad ? " bad" : "");
+    pill.textContent = recording === "picker" ? "Press keys…" : label(picker);
+    pill.title = recording === "picker" ? "Press a key combo · Esc to cancel" : "Click to change";
+  }
   let msg, ok = false, err = false;
   if (recording !== null) msg = "Press the combo now. Esc cancels.";
   else if (dup.size) { msg = "Two or more shortcuts use the same keys. Change the red ones before saving."; err = true; }
   else if (rows.some(r => !r.vk || !r.text)) msg = "Every shortcut needs both keys and text.";
-  else if (JSON.stringify(rows) === saved && !active) msg = "Kemper is deactivated. Shortcuts won't type anything until you activate it.";
-  else if (JSON.stringify(rows) === saved) { msg = notice || "All changes saved. Shortcuts are active."; err = !!notice; }
+  else if (snapshot() === saved && !active) msg = "Kemper is deactivated. Shortcuts won't type anything until you activate it.";
+  else if (snapshot() === saved) { msg = notice || "All changes saved. Shortcuts are active."; err = !!notice; }
   else { msg = "You have unsaved changes."; ok = true; }
   $("#status").textContent = msg;
   $("#status").classList.toggle("err", err);
@@ -933,7 +1096,7 @@ async function startRecording(i) {
 async function stopRecording(update) {
   const i = recording;
   recording = null;
-  if (update) Object.assign(rows[i], update);
+  if (update) Object.assign(i === "picker" ? picker : rows[i], update);
   await api.capture(false);
   validate();
 }
@@ -961,13 +1124,16 @@ document.addEventListener("click", () => { if (recording !== null) stopRecording
 window.addEventListener("blur", () => { if (recording !== null) stopRecording(null); });
 
 $("#save").onclick = async () => {
-  const res = await api.save(rows);
+  const res = await api.save(rows, picker);
   if (!res.ok) { $("#status").textContent = res.error; $("#status").classList.add("err"); return; }
   rows = res.mappings;
-  saved = JSON.stringify(rows);
+  picker = res.picker;
+  saved = snapshot();
   notice = res.notice;
   render();
 };
+$("#pickerPill").onclick = e => { e.stopPropagation(); recording === null ? startRecording("picker") : stopRecording(null); };
+$("#pickerOn").onchange = e => { picker.enabled = e.target.checked; validate(); };
 $("#startup").onchange = async e => { e.target.checked = await api.set_startup(e.target.checked); };
 $("#quit").onclick = () => api.quit();
 function showActive() {
@@ -998,7 +1164,8 @@ async function refresh() {
   recording = null;
   const s = await api.state();
   rows = s.mappings;
-  saved = JSON.stringify(rows);
+  picker = s.picker;
+  saved = snapshot();
   notice = s.notice;
   appearance = s.appearance;
   $("#startup").checked = s.startup;
@@ -1008,6 +1175,127 @@ async function refresh() {
   render();
 }
 window.addEventListener("pywebviewready", () => { api = window.pywebview.api; refresh(); });
+</script>
+</body>
+</html>
+'''
+
+# ---------- the quick picker popup's page ----------
+PICKER_HTML = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kemper Picker</title>
+<style>
+  :root { --bg: #FFFFFF; --text: #1C1C1E; --sub: #8E8E93; --sep: rgba(60,60,67,.14); --field: rgba(118,118,128,.12);
+          --hover: rgba(118,118,128,.10); --sel: rgba(0,122,255,.14); --blue: #007AFF; --pill: #EEEEF3; color-scheme: light; }
+  :root.dark { --bg: #1C1C1E; --text: #FFFFFF; --sub: #8E8E93; --sep: rgba(84,84,88,.5); --field: rgba(118,118,128,.24);
+               --hover: rgba(255,255,255,.06); --sel: rgba(10,132,255,.28); --blue: #0A84FF; --pill: #2C2C2E; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         display: flex; flex-direction: column; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  header { padding: 0 14px 10px; border-bottom: 1px solid var(--sep); }
+  .grab { cursor: move; padding-top: 7px; }
+  .handle { width: 36px; height: 5px; border-radius: 3px; background: var(--sep); margin: 0 auto 8px; }
+  .grab:hover .handle { background: var(--sub); }
+  .top { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px; padding-bottom: 9px; }
+  .title { font-weight: 600; font-size: 15px; }
+  .keys { color: var(--sub); font-size: 12px; }
+  #q { width: 100%; border: 0; outline: 0; border-radius: 10px; background: var(--field); color: var(--text);
+       font: inherit; font-size: 15px; padding: 9px 12px; user-select: text; -webkit-user-select: text; }
+  #q::placeholder { color: var(--sub); }
+  #list { flex: 1; overflow-y: auto; padding: 6px; }
+  #list::-webkit-scrollbar { width: 8px; }
+  #list::-webkit-scrollbar-thumb { background: var(--sep); border-radius: 8px; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; cursor: pointer; min-height: 48px; }
+  .item:hover { background: var(--hover); }
+  .item.sel { background: var(--sel); }
+  .glyph { flex: 1; min-width: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .glyph.big { font-size: 24px; line-height: 1.1; }
+  .combo { flex: none; font-size: 12px; font-weight: 600; color: var(--sub); background: var(--pill); border-radius: 7px; padding: 4px 8px; }
+  .item.sel .combo { color: var(--blue); }
+  .empty { color: var(--sub); text-align: center; padding: 40px 24px; }
+</style>
+</head>
+<body>
+<header>
+  <!-- drag the popup by this strip; the search box below must stay clickable, so it's outside the region -->
+  <div class="grab pywebview-drag-region" title="Drag to move">
+    <div class="handle"></div>
+    <div class="top"><span class="title">Kemper</span><span class="keys">↑ ↓ to move · Enter to type · Esc to close</span></div>
+  </div>
+  <input id="q" placeholder="Search your shortcuts" spellcheck="false" aria-label="Search your shortcuts">
+</header>
+<div id="list" role="listbox" aria-label="Shortcuts"></div>
+<script>
+let api, items = [], shown = [], sel = 0, lastMouse = null;
+const q = document.getElementById("q"), list = document.getElementById("list");
+
+// Kemper calls this each time the picker combo is pressed, just before showing the popup.
+async function openPicker() {
+  if (!api) return;
+  const s = await api.picker_items();
+  document.documentElement.classList.toggle("dark", s.dark);
+  items = s.items;
+  q.value = "";
+  sel = 0;
+  lastMouse = null;
+  draw();
+  setTimeout(() => q.focus(), 30);
+}
+function draw() {
+  const t = q.value.trim().toLowerCase();
+  shown = items.filter(it => !t || it.text.toLowerCase().includes(t) || it.label.toLowerCase().includes(t));
+  list.replaceChildren();
+  if (!shown.length) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = items.length ? "No shortcut matches." : "No shortcuts yet. Add some in Kemper's window.";
+    list.append(e);
+    return;
+  }
+  shown.forEach((it, n) => {
+    const row = document.createElement("div");
+    row.className = "item";
+    row.setAttribute("role", "option");
+    const g = document.createElement("div");
+    g.className = "glyph" + ([...it.text].length <= 3 ? " big" : "");
+    g.textContent = it.text.replace(/\r?\n/g, " ⏎ ");
+    g.title = it.text;
+    const c = document.createElement("div");
+    c.className = "combo";
+    c.textContent = it.label;
+    row.append(g, c);
+    row.onclick = () => api.pick(it.i);
+    row.onmousemove = e => {
+      // The popup opens under the pointer, which fires mousemove without the mouse moving; only real moves select.
+      const pos = e.screenX + "," + e.screenY;
+      if (lastMouse === null || lastMouse === pos) { lastMouse = pos; return; }
+      lastMouse = pos;
+      if (sel !== n) { sel = n; mark(); }
+    };
+    list.append(row);
+  });
+  mark();
+}
+function mark() {
+  [...list.children].forEach((el, n) => {
+    el.classList.toggle("sel", n === sel);
+    el.setAttribute("aria-selected", n === sel);
+  });
+  list.children[sel]?.scrollIntoView({ block: "nearest" });
+}
+q.oninput = () => { sel = 0; draw(); };
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.preventDefault(); api?.close_picker(true); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); mark(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
+  else if (e.key === "Enter" && shown[sel]) { e.preventDefault(); api.pick(shown[sel].i); }
+});
+window.addEventListener("blur", () => api?.close_picker(false)); // clicked elsewhere
+window.addEventListener("focus", () => q.focus());
+window.addEventListener("pywebviewready", () => { api = window.pywebview.api; });
 </script>
 </body>
 </html>

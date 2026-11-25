@@ -2,11 +2,11 @@
 
 **Kemper** (short for **Key Mapper**) types a character or a piece of text when you press a key combo, in any app on Windows.
 
-Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Press **Ctrl + Alt + E** and get **€**. You choose the combos and the text.
+Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Press **Ctrl + Alt + E** and get **€**. You choose the combos and the text. Can't remember them all? Press **Ctrl + Alt + K** to pick from a list, like **Win + V** does for the clipboard.
 
 <p align="center">
-  <img src="docs/images/light.png" alt="Kemper in light mode, showing six shortcuts such as Alt + 2 typing ²" width="380">
-  <img src="docs/images/dark.png" alt="Kemper in dark mode with the same shortcuts" width="380">
+  <img src="docs/images/light.png" alt="Kemper's window in light mode: General settings, the Quick Picker section and a list of shortcuts such as Alt + 2 typing ²" width="380">
+  <img src="docs/images/dark.png" alt="The same window in dark mode" width="380">
 </p>
 
 [![tests](https://github.com/Shashwat-Gupta57/Kemper/actions/workflows/tests.yml/badge.svg)](https://github.com/Shashwat-Gupta57/Kemper/actions/workflows/tests.yml)
@@ -19,32 +19,33 @@ Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Pre
 - **Works in every app.** Word, Chrome, Discord, VS Code, Notepad, anything you can type into.
 - **Set a combo like in a game.** Click the key box, press the keys, and you're done.
 - **Any text.** One character, an emoji, a symbol, or a whole phrase.
+- **Quick picker.** One combo pops up all your shortcuts by the mouse. Search, pick, and Kemper types it.
 - **Catches clashes.** If two shortcuts use the same keys, both turn red and Kemper won't save until you fix them.
 - **Light and dark mode.** Follows Windows, or pick one yourself.
-- **Starts with Windows** and runs quietly in the background. Closing the window doesn't stop it.
+- **Starts with Windows** if you want, and runs quietly in the background. Closing the window doesn't stop it.
 - **Deactivate** turns every shortcut off without quitting.
 - **Full command line.** Run it with no window, and add, remove, list and check shortcuts from a terminal.
-- **One file.** The whole program is [`kemper.pyw`](kemper.pyw). Its only dependency is pywebview, for the window.
+- **One file.** The whole program is [`kemper.pyw`](kemper.pyw).
 
-## Install
+## Get started
 
 You need **Windows 10 or 11** and **[Python 3.10 or newer](https://www.python.org/downloads/)**.
 
 1. Download [`kemper.pyw`](kemper.pyw) and put it in a folder where it can stay, for example `C:\Tools\Kemper\`.
-2. Open a terminal in that folder and run:
+2. Install the one library the window uses:
 
    ```powershell
    python -m pip install pywebview
-   python kemper.pyw --install
    ```
 
-`--install` makes Kemper start with Windows and opens its window. That's it.
+3. Double-click `kemper.pyw`. The window opens.
+4. Turn on **Start with Windows** in the window if you want Kemper running every time you sign in.
 
-> If you only want the command line, `pywebview` is optional. Skip it and use `--cli`.
+Only using the command line? You can skip pywebview. See [From the command line](#from-the-command-line).
 
 ## Use it
 
-### In the window
+### Add a shortcut
 
 1. Click **Add Shortcut**. The key box turns blue and says *Press keys…*
 2. Press your combo, for example **Alt + 2**. Esc cancels.
@@ -55,15 +56,33 @@ Now press Alt + 2 in any app and ² appears.
 
 | Recording a combo | Two shortcuts with the same keys |
 |---|---|
-| <img src="docs/images/recording.png" alt="A key box glowing blue with the words Press keys" width="360"> | <img src="docs/images/conflict.png" alt="Two rows marked red because both use Alt + 2, with Save disabled" width="360"> |
+| <img src="docs/images/recording.png" alt="A key box glowing blue with the words Press keys" width="360"> | <img src="docs/images/conflict.png" alt="Two rows marked red because both use Ctrl + Alt + K, the quick picker's combo; Save is disabled" width="360"> |
 
-Closing the window only hides it; your shortcuts keep working. Run `kemper.pyw` again to bring the window back. **Quit** stops Kemper. **Deactivate** turns shortcuts off but leaves Kemper running.
+### Quick picker
+
+Press **Ctrl + Alt + K** in any app. A small panel opens by your mouse with every shortcut you've made.
+- **Type** to search, **↑ ↓** to move, and **Enter** or a click to type the selected one into the app you were in.
+- **Esc**, clicking elsewhere, or the same combo again closes it.
+- **Drag it by the top strip** to move it out of the way.
+
+<p align="center">
+  <img src="docs/images/picker-light.png" alt="The quick picker: a search box and a list of shortcuts, with € selected" width="300">
+  <img src="docs/images/picker-dark.png" alt="The quick picker in dark mode, filtered to the shortcuts that contain 2" width="300">
+</p>
+
+Change its combo, or turn it off, in the **Quick Picker** section of the window.
+
+### Running in the background
+
+Closing the window only hides it; your shortcuts keep working. Open `kemper.pyw` again to bring the window back.
+- **Quit** stops Kemper.
+- **Deactivate** turns all shortcuts off but leaves Kemper running.
 
 <img src="docs/images/deactivated.png" alt="Kemper deactivated: the shortcut list is dimmed and the button reads Activate" width="380">
 
 ### From the command line
 
-Everything the window does also works from a terminal:
+Everything the window does also works from a terminal. Changes reach a running Kemper right away.
 
 ```console
 > python kemper.pyw --add "Alt+2" "²"
@@ -76,10 +95,13 @@ Added Alt + Shift + 2  →  ₂
   Alt + 2          →  ²
   Alt + Shift + 2  →  ₂
 
-2 shortcut(s), active.
+2 shortcut(s), active. Quick picker: Ctrl + Alt + K
 
 > python kemper.pyw --add "alt+2" "x"
 kemper: Alt + 2 already types ². Remove it first:  python kemper.pyw --remove "alt+2"
+
+> python kemper.pyw --autostart on
+Kemper will start when you sign in to Windows.
 ```
 
 Run Kemper with no window at all. Every shortcut you use is logged as it happens:
@@ -121,12 +143,13 @@ All commands:
 | `--keys` | List your shortcuts |
 | `--add COMBO TEXT` | Add a shortcut |
 | `--remove COMBO` | Remove a shortcut |
+| `--picker COMBO` / `on` / `off` | Set the quick picker's combo, or turn it on or off |
 | `--activate` / `--deactivate` | Turn all shortcuts on or off |
+| `--autostart on` / `off` | Start Kemper when you sign in to Windows, or stop doing so |
 | `--status` | Is Kemper running? Where are its files? |
 | `--doctor` | Find problems and say how to fix them |
 | `--show` | Open the window of the running Kemper |
 | `--quit` | Stop the running Kemper |
-| `--install` | Start Kemper with Windows, and start it now |
 | `--uninstall` | Remove Kemper from this PC |
 | `--help`, `--version` | Help, version |
 
@@ -151,7 +174,7 @@ This asks you to confirm, then stops Kemper, removes it from Windows startup, de
 
 ## Documentation
 
-The [full documentation](docs/DOCUMENTATION.md) covers every command, the combo syntax, the settings file, how Kemper works inside, troubleshooting and limits.
+The [full documentation](docs/DOCUMENTATION.md) covers every command, the combo syntax, the quick picker, the settings file, how Kemper works inside, troubleshooting and limits.
 
 ## Contributing
 

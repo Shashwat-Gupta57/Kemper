@@ -12,8 +12,9 @@ First public release.
 - Game-style combo recording: click the key box, press the keys.
 - Conflict detection: clashing shortcuts turn red, and saving is blocked in the window, the CLI and the settings validator.
 - Deactivate / Activate, which turns all shortcuts off without quitting and is remembered after a restart.
-- Start with Windows, with no admin rights.
-- Command line: `--cli` (runs with no window and logs shortcuts as you use them), `--keys`, `--add`, `--remove`, `--activate`, `--deactivate`, `--status`, `--doctor`, `--show`, `--quit`, `--install`, `--uninstall`, `--help`, `--version`.
+- Quick picker: a combo (Ctrl + Alt + K by default) pops up all your shortcuts by the mouse. Search, pick with Enter or a click, and drag it by its top strip. It's set up in its own section of the window or with `--picker`.
+- Start with Windows, with no admin rights. Use the switch in the window, or `--autostart on|off`.
+- Command line: `--cli` (runs with no window and logs shortcuts as you use them), `--keys`, `--add`, `--remove`, `--picker`, `--activate`, `--deactivate`, `--autostart`, `--status`, `--doctor`, `--show`, `--quit`, `--uninstall`, `--help`, `--version`.
 - CLI changes reach a running Kemper immediately.
 - `--uninstall` removes Kemper from startup, deletes its settings and deletes the program file.
 - Single-file program: everything, including the window's page, lives in `kemper.pyw`.

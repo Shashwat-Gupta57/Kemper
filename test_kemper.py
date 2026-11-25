@@ -32,6 +32,23 @@ for bad in ([a, b, c], [empty], [{**a, "mods": ["Hyper"]}], [{**a, "text": ""}])
     except ValueError:
         pass
 
+# --- quick picker: its combo can't also be a shortcut ---
+picker = k.clean_picker({"enabled": True, "mods": ["Alt", "Ctrl"], "vk": 0x4B, "key": "K"})
+assert picker["mods"] == ["Ctrl", "Alt"]
+ctrl_alt_k = {"mods": ["Ctrl", "Alt"], "vk": 0x4B, "key": "K", "text": "k"}
+try:
+    k.clean_mappings([ctrl_alt_k], picker)
+    raise AssertionError("shortcut on the picker combo was accepted")
+except ValueError:
+    pass
+assert k.clean_mappings([ctrl_alt_k], {**picker, "enabled": False})  # fine once the picker is off
+for bad in ({**picker, "vk": 0}, {**picker, "enabled": "yes"}, None):
+    try:
+        k.clean_picker(bad)
+        raise AssertionError(f"accepted picker {bad}")
+    except ValueError:
+        pass
+
 # --- combos typed as text ---
 p = k.parse_combo
 assert p("alt+shift+2") == {"mods": ["Alt", "Shift"], "vk": 0x32, "key": "2"}
@@ -69,6 +86,15 @@ code, out = cli("--remove", "Alt+2")
 assert code == 1 and "No shortcut uses" in out, out
 saved = json.load(open(os.path.join(env["APPDATA"], "Kemper", "mappings.json"), encoding="utf-8"))
 assert saved["mappings"] == [] and saved["active"] is False
+code, out = cli("--add", "Ctrl+Alt+K", "k")  # the picker's default combo
+assert code == 1 and "opens the quick picker" in out, out
+code, out = cli("--picker", "Ctrl+Alt+P")
+assert code == 0 and "Quick picker: Ctrl + Alt + P" in out, out
+assert cli("--add", "Ctrl+Alt+K", "k")[0] == 0  # free now
+code, out = cli("--picker", "ctrl+alt+k")  # now clashes with that shortcut
+assert code == 1 and "quick picker" in out, out
+code, out = cli("--picker", "off")
+assert code == 0 and "Quick picker: off" in out and "Quick picker: off" in cli("--keys")[1], out
 code, out = cli("--help")
 assert code == 0 and "--doctor" in out and "--cli" in out
 print("ok")

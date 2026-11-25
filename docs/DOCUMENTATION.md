@@ -3,8 +3,9 @@
 Kemper (Key Mapper) types a character or text when you press a key combo, in any Windows app. This page covers everything in detail. For a quick start, see the [README](../README.md).
 
 - [Requirements](#requirements)
-- [Installing](#installing)
+- [Getting started](#getting-started)
 - [The window](#the-window)
+- [Quick picker](#quick-picker)
 - [Command line reference](#command-line-reference)
 - [Writing combos](#writing-combos)
 - [What text can be typed](#what-text-can-be-typed)
@@ -25,16 +26,18 @@ Kemper (Key Mapper) types a character or text when you press a key combo, in any
 | [pywebview](https://pywebview.flowrl.com/) | the window | `python -m pip install pywebview`. Not needed for the CLI |
 | Edge WebView2 Runtime | the window | Built into Windows 11 and current Windows 10. [Download](https://go.microsoft.com/fwlink/p/?LinkId=2124703) if `--doctor` says it's missing |
 
-## Installing
+## Getting started
 
-Kemper is a single file, `kemper.pyw`. Keep it in a folder where it can stay, because Windows startup points at that exact path.
+Kemper is a single file, `kemper.pyw`. There's no installer: put it in a folder where it can stay and run it.
 
-```powershell
-python -m pip install pywebview
-python kemper.pyw --install
-```
+**With the window:**
+1. Install the window's library: `python -m pip install pywebview`
+2. Double-click `kemper.pyw`.
+3. To have Kemper running every time you sign in, turn on **Start with Windows** in the window.
 
-`--install` adds Kemper to Windows startup and opens it. If you move `kemper.pyw` later, run `--install` again from the new place. `--doctor` warns you if the startup entry points to an old location.
+**Command line only:** pywebview isn't needed. Use `python kemper.pyw --cli` to run Kemper in a terminal, and `python kemper.pyw --autostart on` to start it with Windows. If pywebview is missing, Kemper still runs your shortcuts at sign-in, just without a window.
+
+Starting with Windows points at the exact path of `kemper.pyw`. If you move the file, switch **Start with Windows** off and on again, or run `--autostart on` from the new place. `--doctor` warns you if the startup entry points to an old location.
 
 ## The window
 
@@ -44,25 +47,45 @@ Open it by running `kemper.pyw` (double-click works), or with `python kemper.pyw
 |---|---|
 | **Deactivate / Activate** | Turns every shortcut off or back on. Kemper stays running, and the choice is remembered after a restart |
 | **Quit** | Stops Kemper completely. Shortcuts stop working until you start it again |
-| **Start with Windows** | Adds or removes Kemper from Windows startup |
+| **Start with Windows** | Starts Kemper, hidden, every time you sign in to Windows |
 | **Appearance** | System follows your Windows light or dark setting as it changes. Light and Dark force one look |
+| **Quick picker** switch | Turns the [quick picker](#quick-picker) on or off |
+| **Open it with** | The quick picker's combo. Click it and press new keys to change it. Default: Ctrl + Alt + K |
 | **Key box** | Click it, then press a combo. Esc or clicking elsewhere cancels |
 | **Text field** | What the combo types. Paste anything, including emoji |
 | **Red minus** | Deletes that shortcut |
 | **Add Shortcut** | Adds a row and starts recording its combo right away |
 | **Save** (Ctrl + S) | Saves and applies your changes. It's only enabled when there's something valid to save |
 
-**Conflicts.** When two shortcuts use the same keys, both rows turn red and Save stays disabled until you change one of them. Modifier order doesn't matter: Alt + Shift + 2 and Shift + Alt + 2 are the same combo.
+**Conflicts.** When two shortcuts use the same keys, both rows turn red and Save stays disabled until you change one of them. The quick picker's combo counts too: a shortcut can't use it while the picker is on. Modifier order doesn't matter: Alt + Shift + 2 and Shift + Alt + 2 are the same combo.
 
 **Closing the window** only hides it. Shortcuts keep working. Running `kemper.pyw` again brings the window back instead of starting a second copy.
 
 While you record a combo, Kemper pauses all shortcuts, so pressing an existing combo records it instead of typing its text.
 
+## Quick picker
+
+The quick picker is for shortcuts you don't remember. Press its combo (**Ctrl + Alt + K** by default) in any app, and a small panel opens by your mouse with all your shortcuts. It works like **Win + V** does for the clipboard.
+
+| Do this | To |
+|---|---|
+| Type | Filter by the text or by the combo's name (`2`, `alt`, `€`) |
+| ↑ ↓, or hover | Move the highlight |
+| Enter, or click | Type the highlighted text into the app you were in |
+| Esc, click elsewhere, or press the combo again | Close it without typing anything |
+| Drag the top strip (the one with the small handle) | Move the panel |
+
+The panel opens near the mouse each time, kept on screen, and doesn't show in the taskbar. It follows your Appearance setting.
+
+Change its combo in the window (**Quick Picker → Open it with**), or with `python kemper.pyw --picker "Ctrl+Alt+P"`. Turn it off with the switch or `--picker off`.
+
+The picker is part of the window version of Kemper. It isn't available in `--cli` mode, which has no window.
+
 ## Command line reference
 
 Run commands with `python kemper.pyw <command>`. Use `python`, not `pythonw`: `pythonw` has no console, so you wouldn't see any output.
 
-Commands that change settings (`--add`, `--remove`, `--activate`, `--deactivate`) also update a running Kemper immediately, whether it's the window or `--cli`.
+Commands that change settings (`--add`, `--remove`, `--picker`, `--activate`, `--deactivate`) also update a running Kemper immediately, whether it's the window or `--cli`.
 
 ### `--cli`
 
@@ -110,6 +133,18 @@ Removes the shortcut with that combo. Spelling and modifier order don't need to 
 Removed alt+ctrl+e.
 ```
 
+### `--picker COMBO|on|off`
+
+Sets the [quick picker](#quick-picker)'s combo, or turns the picker on or off. Kemper refuses a combo that a shortcut already uses.
+
+```console
+> python kemper.pyw --picker "Ctrl+Alt+P"
+Quick picker: Ctrl + Alt + P
+
+> python kemper.pyw --picker off
+Quick picker: off
+```
+
 ### `--activate`, `--deactivate`
 
 Turns all shortcuts on or off without quitting Kemper. This is the same as the button in the window.
@@ -121,6 +156,7 @@ Turns all shortcuts on or off without quitting Kemper. This is the same as the b
 Kemper 1.0.0
   Running:             yes
   Shortcuts:           2 (active)
+  Quick picker:        Ctrl + Alt + K
   Start with Windows:  on
   Settings file:       C:\Users\you\AppData\Roaming\Kemper\mappings.json
   Program file:        C:\Tools\Kemper\kemper.pyw
@@ -142,9 +178,18 @@ It checks:
 
 `--show` opens the window of the running Kemper, or starts Kemper if it isn't running. `--quit` stops the running Kemper, whether it's the window or `--cli`.
 
-### `--install`, `--uninstall`
+### `--autostart on|off`
 
-See [Installing](#installing) and [Uninstalling](#uninstalling).
+Starts Kemper when you sign in to Windows, or stops doing so. This is the same as the **Start with Windows** switch in the window.
+
+```console
+> python kemper.pyw --autostart on
+Kemper will start when you sign in to Windows.
+```
+
+### `--uninstall`
+
+See [Uninstalling](#uninstalling).
 
 ### `--hidden`
 
@@ -193,7 +238,8 @@ Kemper keeps its settings in `%APPDATA%\Kemper\mappings.json` (usually `C:\Users
     { "mods": ["Alt", "Shift"], "vk": 50, "key": "2", "text": "₂" }
   ],
   "appearance": "system",
-  "active": true
+  "active": true,
+  "picker": { "enabled": true, "mods": ["Ctrl", "Alt"], "vk": 75, "key": "K" }
 }
 ```
 
@@ -205,6 +251,7 @@ Kemper keeps its settings in `%APPDATA%\Kemper\mappings.json` (usually `C:\Users
 | `text` | What gets typed |
 | `appearance` | `system`, `light` or `dark` |
 | `active` | `false` when Kemper is deactivated |
+| `picker` | The quick picker: whether it's on, and its combo |
 
 You can edit the file by hand. Afterwards, restart Kemper, or run any setting command so a running Kemper reloads it. Run `--doctor` to check your edit. Kemper never saves a file with conflicts or empty entries, and it saves atomically, so a crash can't leave a half-written file.
 
@@ -246,6 +293,7 @@ Kemper is one Python file with no dependencies beyond the standard library and p
 - **Typing.** When a combo fires, Kemper first taps an unassigned key, so releasing Alt doesn't open the app's menu bar. That's the same trick AutoHotkey uses. Kemper then waits until you let go of the modifier keys and types the text with [`SendInput`](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-sendinput) in Unicode mode, which doesn't depend on the keyboard layout. Characters outside the basic plane, such as emoji, are sent as UTF-16 surrogate pairs.
 - **Window.** The interface is HTML/CSS/JS kept inside `kemper.pyw` and shown with pywebview, which uses Edge WebView2. The page calls into Python through pywebview's JS bridge, and the title bar follows dark mode through DWM.
 - **One instance, and CLI control.** The running Kemper listens on `127.0.0.1:47321` for a few one-word commands: `show`, `quit`, `reload`, `ping`. That's how a second launch shows the window and how CLI changes reach a running Kemper. It only accepts connections from your own PC.
+- **Quick picker.** A second, borderless window that's created hidden and registered under its own hotkey. When the combo fires, Kemper remembers which window had focus, puts the panel by the mouse and shows it. When you pick, Kemper hides the panel, gives focus back to that window and types the text there, the same way as a normal shortcut.
 - **Settings** are validated on the Python side before saving, whatever the UI or CLI sent.
 
 ## Troubleshooting
@@ -258,7 +306,8 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 | Red notice: *"Already used by another app"* | Pick different keys for the shortcuts it names. |
 | The window doesn't open | Run `python kemper.pyw` from a terminal to see the error. Usually pywebview or WebView2 is missing (`--doctor`). |
 | *"Kemper is already running"* with `--cli` | Stop the window version with `--quit`, then start `--cli`. |
-| Kemper doesn't start at login | Run `--install` again. The startup entry may point to an old location of the file. |
+| Kemper doesn't start at sign-in | Switch **Start with Windows** off and on again (or run `--autostart on`). The startup entry may point to an old location of the file. |
+| The quick picker doesn't open | It needs the window version of Kemper, not `--cli`. Check that it's switched on and that its combo isn't red or taken (`--doctor`). |
 | Text appears in the wrong app | Kemper types into whichever window has focus when you press the combo. |
 | A combo works everywhere except one app | Apps running as administrator ignore input from normal apps. That's a Windows rule. Run Kemper as administrator too, if you need it there. |
 | Port 47321 is used by another program | Change `PORT` near the top of `kemper.pyw`. |
@@ -269,6 +318,7 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 - Shortcuts can't type into apps running as administrator unless Kemper runs as administrator too.
 - Combos already owned by Windows or another app can't be used.
 - There's no tray icon. Run `kemper.pyw` or `--show` to open the window.
+- The quick picker needs the window version; it's off in `--cli` mode.
 - The window's text field is single-line. Multi-line text works through the settings file.
 - Changing settings from the CLI while the window has unsaved edits replaces those edits with the saved settings.
 
@@ -297,4 +347,5 @@ Code layout inside `kemper.pyw`, top to bottom:
 - combo parsing
 - the CLI commands
 - the window launcher
+- the embedded quick picker page (`PICKER_HTML`)
 - the embedded page (`UI_HTML`)
