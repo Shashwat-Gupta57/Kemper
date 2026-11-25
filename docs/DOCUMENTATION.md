@@ -509,6 +509,26 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 | Text appears in the wrong app | Kemper types into whichever window has focus when you press the combo. |
 | A combo works everywhere except one app | Apps running as administrator ignore input from normal apps. That's a Windows rule. Run Kemper as administrator too, if you need it there. |
 | Port 47321 is used by another program | Change `PORT` near the top of `kemper.pyw`. |
+| Ctrl+Shift+0 (or another Ctrl+Shift+digit) never fires on Windows | Windows swallows it for switching keyboard language. See below. |
+
+### Ctrl+Shift+0 (or another combo) never fires
+
+On Windows, the text-input system can reserve combos to switch straight to a keyboard layout. It catches them before any app sees them, so Kemper can register the combo but never receives it, and the key box in the window doesn't react when you press it. Kemper names these combos in its red "won't work" notice and in `--doctor`.
+
+The usual culprit is **Ctrl+Shift+0**. Windows ships it as "switch to the Japanese input method", and the hotkey stays active even on PCs without Japanese. That's also why Ctrl+Shift+0 does nothing in Excel and other apps.
+
+To free it:
+- **If the language is installed:** in Settings → Time & language → Typing → Advanced keyboard settings → **Input language hot keys**, pick the entry, choose **Change Key Sequence** and set it to *Not assigned*.
+- **If the entry isn't listed** (the Japanese one usually isn't): clear it in the registry from PowerShell. `00000104` is the Ctrl+Shift+0 entry; `--doctor` and the registry key list others.
+
+  ```powershell
+  $k = "HKCU:\Control Panel\Input Method\Hot Keys\00000104"
+  Set-ItemProperty $k "Virtual Key" ([byte[]](0xFF, 0, 0, 0))
+  Set-ItemProperty $k "Key Modifiers" ([byte[]](0, 0xC0, 0, 0))
+  Set-ItemProperty $k "Target IME" ([byte[]](0, 0, 0, 0))
+  ```
+
+  Then sign out and back in. This only affects your account, and you can undo it by setting the values back. Otherwise, pick a different combo, like Ctrl+Alt+0.
 
 ## Limits
 

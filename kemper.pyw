@@ -15,7 +15,7 @@ if IS_WIN:
     from ctypes import wintypes
 
 APP = "Kemper"
-VERSION = "3.1.0"
+VERSION = "3.1.1"
 
 def config_dir():
     """Where settings live: KEMPER_HOME if set (the tests use it), else each system's usual place."""
@@ -112,11 +112,16 @@ if IS_WIN:
 
         def run(self):
             self.tid = kernel32.GetCurrentThreadId()
+            swallowed = input_language_hotkeys()
             for i, m in enumerate(self.rows):
                 if not user32.RegisterHotKey(None, i + 1, hotkey_flags(m), m["vk"]):
                     self.failed.append(combo_label(m))
+                elif combo_id(m) in swallowed:  # registers fine, but Windows' text input eats the keys first
+                    self.failed.append(combo_label(m) + " (Windows uses it to switch keyboard language)")
             if self.picker and not user32.RegisterHotKey(None, PICKER_ID, hotkey_flags(self.picker), self.picker["vk"]):
                 self.failed.append(combo_label(self.picker) + " (quick picker)")
+            elif self.picker and combo_id(self.picker) in swallowed:
+                self.failed.append(combo_label(self.picker) + " (quick picker; Windows uses it to switch keyboard language)")
             self.ready.set()
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -381,15 +386,51 @@ if IS_WIN:
         check(0 if wv2 else 1, f"Edge WebView2 {wv2} (draws the window)" if wv2 else
               "Edge WebView2 not found, so the window may not open. Get it from https://go.microsoft.com/fwlink/p/?LinkId=2124703")
 
+    def input_language_hotkeys():
+        """Combos Windows' text input swallows before any app sees them: the keyboard-layout and IME switch hotkeys
+        under HKCU\\Control Panel\\Input Method\\Hot Keys. Windows ships Ctrl+Shift+0 there (switch to the Japanese IME),
+        even on PCs without Japanese, which is why Ctrl+Shift+0 often does nothing."""
+        found, path = set(), r"Control Panel\Input Method\Hot Keys"
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as root:
+                n = 0
+                while True:
+                    try:
+                        sub = winreg.EnumKey(root, n)
+                    except OSError:
+                        break
+                    n += 1
+                    # only the "switch straight to a keyboard layout" range (0x100-0x11F) is global; the others belong to
+                    # Chinese input methods and only apply while one is active (e.g. 0x200+ holds Ctrl+Alt+K)
+                    if not (sub.isalnum() and 0x100 <= int(sub, 16) <= 0x11F):
+                        continue
+                    try:
+                        with winreg.OpenKey(root, sub) as k:
+                            vk = bytes(winreg.QueryValueEx(k, "Virtual Key")[0])[0]
+                            mods = bytes(winreg.QueryValueEx(k, "Key Modifiers")[0])[0]
+                    except (OSError, IndexError, TypeError):
+                        continue
+                    if 0 < vk < 0xFF:  # 0xFF means "not assigned"
+                        found.add((frozenset(name for name, _, flag in MODS if mods & flag), vk))
+        except OSError:
+            pass
+        return found
+
     def hotkeys_taken(combos):
-        """Combos another app already owns, found by trying to register each one for a moment."""
-        taken = []
+        """Combos another app owns (found by trying to register each one for a moment), or that Windows' keyboard-
+        language switching swallows."""
+        taken, swallowed = [], input_language_hotkeys()
         for m in combos:
-            if user32.RegisterHotKey(None, 0xBFFF, hotkey_flags(m), m["vk"]):
-                user32.UnregisterHotKey(None, 0xBFFF)
-            else:
+            if not user32.RegisterHotKey(None, 0xBFFF, hotkey_flags(m), m["vk"]):
                 taken.append(combo_label(m))
+                continue
+            user32.UnregisterHotKey(None, 0xBFFF)
+            if combo_id(m) in swallowed:
+                taken.append(combo_label(m) + SWALLOWED_HINT)
         return taken
+
+    SWALLOWED_HINT = (" (Windows keeps it for switching keyboard language; to free it see "
+                      "https://github.com/Shashwat-Gupta57/Kemper/blob/main/docs/DOCUMENTATION.md#ctrlshift0-or-another-combo-never-fires)")
 
 # ---------- macOS and Linux: the same functions, through Quartz (macOS) and X11 (Linux) ----------
 else:
@@ -956,6 +997,11 @@ else:
 
     def hotkeys_taken(combos):
         return None  # no cheap test here; Kemper reports taken combos when it starts
+
+    def input_language_hotkeys():
+        return set()  # a Windows-only trap
+
+    SWALLOWED_HINT = ""
 
 # ---------- mappings ----------
 def combo_id(m):
@@ -1761,7 +1807,12 @@ def cmd_doctor():
               "Keypack files (.kmppck) aren't linked to Kemper yet. Fix: open Kemper's window once")
 
     if running:
-        check(0, "Skipped the hotkey check because the running Kemper is holding them")
+        combos = cfg["mappings"] + ([cfg["picker"]] if cfg["picker"]["enabled"] else [])
+        swallowed = [combo_label(m) for m in combos if combo_id(m) in input_language_hotkeys()]
+        if swallowed:  # these never reach Kemper, running or not
+            check(2, "Windows swallows these before Kemper sees them: " + ", ".join(swallowed) + SWALLOWED_HINT)
+        else:
+            check(0, "Skipped the hotkey check because the running Kemper is holding them")
     else:
         combos = cfg["mappings"] + ([cfg["picker"]] if cfg["picker"]["enabled"] else [])
         taken = hotkeys_taken(combos)

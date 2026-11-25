@@ -2,6 +2,11 @@
 
 All notable changes to Kemper are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.1.1] - 2026-11-25
+
+### Fixed
+- **Ctrl+Shift+0 silently doing nothing on Windows.** Windows reserves it, even without Japanese installed, as "switch to the Japanese input method", and its text-input system swallows the keys before any app sees them. Kemper now reads Windows' keyboard-layout switch hotkeys. It names any shortcut or quick-picker combo they block in its red "won't work" notice and in `--doctor`, even while Kemper is running. The documentation explains how to free the combo.
+
 ## [3.1.0] - 2026-11-25
 
 Kemper runs on macOS and Linux too.
@@ -99,6 +104,7 @@ First public release. Kemper is rebuilt around a new window, a full command line
 
 - First version: map key combos to text in a tkinter window, with conflicts marked in red and start with Windows.
 
+[3.1.1]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.1.1
 [3.1.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.1.0
 [3.0.1]: https://github.com/Shashwat-Gupta57/Kemper/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.0.0
