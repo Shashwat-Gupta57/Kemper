@@ -6,6 +6,7 @@ Kemper (Key Mapper) types a character or text when you press a key combo, in any
 - [Getting started](#getting-started)
 - [The window](#the-window)
 - [Quick picker](#quick-picker)
+- [Keypacks](#keypacks)
 - [Command line reference](#command-line-reference)
 - [Writing combos](#writing-combos)
 - [What text can be typed](#what-text-can-be-typed)
@@ -83,6 +84,109 @@ Change its combo in the window (**Quick Picker → Open it with**), or with `pyt
 
 The picker is part of the window version of Kemper. It isn't available in `--cli` mode, which has no window.
 
+## Keypacks
+
+A keypack is a set of shortcuts saved in one `.kmppck` file so it can be shared: by email, in a chat, on a website. Anyone with Kemper can import it.
+
+### Importing a keypack
+
+Double-click a `.kmppck` file, or use **Keypacks → Import a keypack…** at the bottom of Kemper's window, or run `python kemper.pyw --keypack FILE`. Kemper opens (or comes to the front, if it's already running) and asks whether to import it.
+
+The question shows the keypack's name, its file and every shortcut in it, with what importing would do:
+
+| Mark | Meaning | What import does |
+|---|---|---|
+| Red | Clashes with one of your shortcuts, with your quick picker, or with another shortcut in the keypack | Adds it. Both rows turn red in your list |
+| Orange | Takes over a key you probably use a lot: a Ctrl + letter that apps rely on (copy, paste, save, …) or a key with no modifier but Shift | Adds it. Check whether you really want it |
+| Gray | You already have exactly this shortcut | Skips it |
+| *none* | New and clash-free | Adds it |
+
+**Conflicts don't stop the import; they stop saving.** After importing, the new shortcuts are in your list but not saved yet, exactly like ones you add by hand. If any are red, Save stays disabled until you change their keys or remove them. Click Cancel to import nothing.
+
+### Making a keypack
+
+1. At the bottom of Kemper's window, click **Keypacks → Create a keypack**.
+2. Choose **New keypack** to start empty, or **Edit a keypack file…** to open an existing `.kmppck` and change it.
+3. The **Keypack Editor** opens in its own window:
+
+| Control | What it does |
+|---|---|
+| **Import** (top left) | Shows your Kemper shortcuts as a gallery. Click tiles to pick them, use **Select all** / **Deselect all**, then **Add**. Shortcuts already in the keypack are greyed out |
+| **✦ AI** | Lets an AI chat write shortcuts for you. See [Making keypacks with AI](#making-keypacks-with-ai) |
+| **Add** (Ctrl + N) | Adds a shortcut and starts recording its combo. Press the keys, then type its text |
+| **Remove** (Delete) | Removes the selected shortcut. Click a row to select it |
+| **Undo** (Ctrl + Z), **Redo** (Ctrl + Y) | Steps back and forth through your last 50 changes. Typing in one text box counts as one change until you pause |
+| **Export** (Ctrl + S) | Saves the keypack as a file |
+
+4. Click **Export** and fill in:
+   - **Keypack name:** what people see when they import it, for example *Math symbols*.
+   - **File name:** the `.kmppck` file's name. It starts out matching the keypack name, but you can change it; the name inside the file stays the same.
+   - **Folder:** where to save it. Click **Choose…** to pick one. Kemper asks before replacing a file that's already there.
+
+Like Kemper itself, the editor won't export while shortcuts clash or are missing keys or text. If you close the editor with changes you haven't exported, it asks first.
+
+### Making keypacks with AI
+
+Any AI chat (ChatGPT, Claude, Gemini, Copilot, …) can write a keypack from a plain description. Kemper includes instructions that teach the AI the format, the key names, which combos to avoid, and that every combo must be different.
+
+1. Open the AI helper in either of two ways:
+   - Click **✦ AI** in the Keypack Editor.
+   - In Kemper's window, choose **Keypacks → Create a keypack → Make one with AI…**.
+2. Click **Copy instructions** and paste them into a new AI chat. **Show** displays them first.
+3. Tell the AI what you want, for example *"subscript digits on Alt+Shift+0 to 9"* or *"my standard email replies on Ctrl+Alt+1 to 5"*.
+4. Copy the AI's whole answer, paste it into step 3 of the dialog, and click **Add to keypack**.
+
+Kemper picks the keypack out of the answer, so any chat text or code fences around it don't matter. It then checks every shortcut:
+- **Broken ones** are refused with a message naming them, for example *Shortcut 3 (Alt+Banana) in this keypack is broken: Unknown key 'Banana'*.
+- **Clashing ones** show in red.
+
+Everything lands in the editor, where you can change it, undo it, export it or import it into your Kemper.
+
+The same instructions are in [AI_INSTRUCTIONS.md](AI_INSTRUCTIONS.md), with a copy button on GitHub, and `python kemper.pyw --ai-instructions` prints them. You can also save the AI's JSON as a `.kmppck` file and double-click it.
+
+### The .kmppck file format
+
+A keypack is a UTF-8 JSON file:
+
+```json
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Math symbols",
+  "made_with": "Kemper 3.0.0",
+  "mappings": [
+    { "keys": "Alt+2", "text": "²" },
+    { "keys": "Alt+Shift+2", "text": "₂" },
+    { "mods": ["Alt"], "vk": 107, "key": "Num +", "text": "±" }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `format` | Always `"kemper-keypack"` |
+| `version` | `1`. Optional; Kemper assumes 1 |
+| `name` | What people see when importing. Optional; without it, Kemper uses the file name |
+| `made_with` | Informational only |
+| `mappings` | The shortcuts, in either of two forms |
+
+Each shortcut takes one of two forms:
+- **Readable:** `{ "keys": "Ctrl+Alt+E", "text": "€" }`. `keys` uses the [combo syntax](#writing-combos), so case and spaces don't matter. This is what Kemper writes, and what people and AI should write.
+- **Exact:** `{ "mods": [...], "vk": ..., "key": ..., "text": ... }`, the same fields as the [settings file](#settings-file). Kemper writes it only for the rare key that has no readable name, like the number pad's `+`.
+
+Kemper refuses a keypack that:
+- is bigger than 1 MB
+- isn't valid JSON or lacks `"format": "kemper-keypack"`
+- comes from a newer version of the format
+- has more than 1,000 shortcuts
+- has a broken shortcut, or text longer than 10,000 characters
+
+Text before or after the JSON object is ignored, so a copied AI reply works as it is.
+
+### How .kmppck files open in Kemper
+
+The first time Kemper's window runs, it registers the `.kmppck` file type for your user account: `HKEY_CURRENT_USER\Software\Classes\.kmppck` and `Kemper.Keypack`, with Kemper's icon. No admin rights are needed. It checks this on every start and fixes it if you've moved `kemper.pyw`. `--uninstall` removes it. `--doctor` tells you whether it's in place.
+
 ## Command line reference
 
 Run commands with `python kemper.pyw <command>`. Use `python`, not `pythonw`: `pythonw` has no console, so you wouldn't see any output.
@@ -95,7 +199,7 @@ Runs Kemper in the terminal with no window. It logs each shortcut as you use it 
 
 ```console
 > python kemper.pyw --cli
-Kemper 2.0.0 is running in this terminal (no window).
+Kemper 3.0.0 is running in this terminal (no window).
   2 shortcut(s) active. Each one shows up here when you use it.
   Press Ctrl+C to stop.
 
@@ -155,7 +259,7 @@ Turns all shortcuts on or off without quitting Kemper. This is the same as the b
 
 ```console
 > python kemper.pyw --status
-Kemper 2.0.0
+Kemper 3.0.0
   Running:             yes
   Shortcuts:           2 (active)
   Quick picker:        Ctrl + Alt + K
@@ -197,6 +301,14 @@ Adds or removes the desktop shortcut with Kemper's icon. This is the same as the
 > python kemper.pyw --desktop on
 Added Kemper to your desktop (C:\Users\you\Desktop\Kemper.lnk).
 ```
+
+### `--ai-instructions`
+
+Prints the instructions that teach an AI chat to write keypacks. See [Making keypacks with AI](#making-keypacks-with-ai).
+
+### `--keypack FILE`
+
+Opens a keypack in Kemper's window and asks whether to import it. This is what double-clicking a `.kmppck` file does. See [Keypacks](#keypacks).
 
 ### `--uninstall`
 
@@ -282,11 +394,11 @@ python kemper.pyw --uninstall
 
 After you confirm, Kemper:
 1. stops the running Kemper,
-2. removes its Windows startup entry and its desktop shortcut,
+2. removes its Windows startup entry and its desktop shortcut, and unlinks `.kmppck` files,
 3. deletes `%APPDATA%\Kemper` (your shortcuts, settings and Kemper's icon file),
 4. deletes `kemper.pyw` itself.
 
-It touches nothing else. pywebview stays installed because other programs may use it; remove it with `python -m pip uninstall pywebview` if you like. Add `--yes` to skip the confirmation.
+It touches nothing else; keypack files you've saved stay where they are. pywebview stays installed because other programs may use it; remove it with `python -m pip uninstall pywebview` if you like. Add `--yes` to skip the confirmation.
 
 ## How Kemper works
 
@@ -303,7 +415,8 @@ Kemper is one Python file with no dependencies beyond the standard library and p
 - **Hotkeys.** Each shortcut is registered with the Win32 [`RegisterHotKey`](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-registerhotkey) function on a dedicated thread. Windows delivers the combo to Kemper and swallows it, so the app you're in never sees it.
 - **Typing.** When a combo fires, Kemper first taps an unassigned key, so releasing Alt doesn't open the app's menu bar. That's the same trick AutoHotkey uses. Kemper then waits until you let go of the modifier keys and types the text with [`SendInput`](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-sendinput) in Unicode mode, which doesn't depend on the keyboard layout. Characters outside the basic plane, such as emoji, are sent as UTF-16 surrogate pairs.
 - **Window.** The interface is HTML/CSS/JS kept inside `kemper.pyw` and shown with pywebview, which uses Edge WebView2. The page calls into Python through pywebview's JS bridge, and the title bar follows dark mode through DWM.
-- **One instance, and CLI control.** The running Kemper listens on `127.0.0.1:47321` for a few one-word commands: `show`, `quit`, `reload`, `ping`. That's how a second launch shows the window and how CLI changes reach a running Kemper. It only accepts connections from your own PC.
+- **One instance, and CLI control.** The running Kemper listens on `127.0.0.1:47321` for a few short commands: `show`, `quit`, `reload`, `ping`, and `keypack` followed by a file path. That's how a second launch shows the window, how double-clicking a keypack reaches a running Kemper, and how CLI changes reach it. It only accepts connections from your own PC.
+- **Keypacks.** The Keypack Editor is a third window that uses the main window's styles. Keypack files are validated in Python, as untrusted input, before anything is shown, and conflicts are worked out in Python too, so the window and the files follow the same rules.
 - **Icon.** Kemper's icon is stored inside `kemper.pyw` as PNG data. At startup it's written to `%APPDATA%\Kemper\kemper.ico`, because the window title bar and the desktop shortcut need a real file. Kemper also gives itself its own taskbar identity (an AppUserModelID), so the taskbar shows its icon instead of Python's.
 - **Quick picker.** A second, borderless window that's created hidden and registered under its own hotkey. When the combo fires, Kemper remembers which window had focus, puts the panel by the mouse and shows it. When you pick, Kemper hides the panel, gives focus back to that window and types the text there, the same way as a normal shortcut.
 - **Settings** are validated on the Python side before saving, whatever the UI or CLI sent.
@@ -320,6 +433,8 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 | *"Kemper is already running"* with `--cli` | Stop the window version with `--quit`, then start `--cli`. |
 | Kemper doesn't start at sign-in | Switch **Start with Windows** off and on again (or run `--autostart on`). The startup entry may point to an old location of the file. |
 | The quick picker doesn't open | It needs the window version of Kemper, not `--cli`. Check that it's switched on and that its combo isn't red or taken (`--doctor`). |
+| Double-clicking a `.kmppck` doesn't open Kemper | Open Kemper's window once; it links the file type. If Windows asks which app to use, pick Kemper's. `--doctor` shows whether the link is in place. |
+| *"This keypack was made by a newer Kemper"* | Update `kemper.pyw` from the [releases page](https://github.com/Shashwat-Gupta57/Kemper/releases). |
 | Text appears in the wrong app | Kemper types into whichever window has focus when you press the combo. |
 | A combo works everywhere except one app | Apps running as administrator ignore input from normal apps. That's a Windows rule. Run Kemper as administrator too, if you need it there. |
 | Port 47321 is used by another program | Change `PORT` near the top of `kemper.pyw`. |
@@ -330,7 +445,7 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 - Shortcuts can't type into apps running as administrator unless Kemper runs as administrator too.
 - Combos already owned by Windows or another app can't be used.
 - There's no tray icon. Run `kemper.pyw` or `--show` to open the window.
-- The quick picker needs the window version; it's off in `--cli` mode.
+- The quick picker and keypacks need the window version; they're off in `--cli` mode.
 - The window's text field is single-line. Multi-line text works through the settings file.
 - Changing settings from the CLI while the window has unsaved edits replaces those edits with the saved settings.
 

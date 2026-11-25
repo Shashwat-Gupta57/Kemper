@@ -8,8 +8,14 @@ import argparse, base64, ctypes, json, os, re, shutil, socket, struct, subproces
 from ctypes import wintypes
 
 APP = "Kemper"
-VERSION = "2.0.0"
+VERSION = "3.0.0"
 CONFIG = os.path.join(os.environ.get("APPDATA", "."), APP, "mappings.json")
+EDITOR_TITLE = "Kemper Keypack Editor"
+KEYPACK_EXT = ".kmppck"
+KEYPACK_PROGID = "Kemper.Keypack"
+KEYPACK_MAX_BYTES = 1_000_000  # keypacks come from other people: keep what we read bounded
+KEYPACK_MAX_ITEMS = 1000
+TEXT_MAX = 10_000
 PICKER_TITLE = "Kemper Picker"
 PICKER_ID = 0xB000  # hotkey id of the quick picker; shortcut ids are 1..n
 DEFAULT_PICKER = {"enabled": True, "mods": ["Ctrl", "Alt"], "vk": 0x4B, "key": "K"}
@@ -102,16 +108,23 @@ def clean_picker(p):
     return {"enabled": p["enabled"], "mods": sorted(set(p["mods"]), key=[n for n, _, _ in MODS].index),
             "vk": p["vk"], "key": p["key"]}
 
+def clean_mapping(r):
+    """Validate one mapping (from the UI, the CLI or a keypack file); raises ValueError."""
+    names = {n for n, _, _ in MODS}
+    mods, vk, key, text = (r.get("mods"), r.get("vk"), r.get("key"), r.get("text")) if isinstance(r, dict) else (None,) * 4
+    if not (isinstance(mods, list) and all(isinstance(m, str) for m in mods) and set(mods) <= names
+            and isinstance(vk, int) and not isinstance(vk, bool) and 0 < vk < 255
+            and isinstance(key, str) and 0 < len(key) <= 40 and isinstance(text, str) and text):
+        raise ValueError("Every shortcut needs both keys and text.")
+    if len(text) > TEXT_MAX:
+        raise ValueError(f"A shortcut's text can be at most {TEXT_MAX:,} characters.")
+    return {"mods": sorted(set(mods), key=[n for n, _, _ in MODS].index), "vk": vk, "key": key, "text": text}
+
 def clean_mappings(rows, picker=None):
     """Validate mappings coming from the UI or CLI; raises ValueError so a bad config is never saved."""
-    names = {n for n, _, _ in MODS}
-    out = []
-    for r in rows:
-        mods, vk, key, text = r.get("mods"), r.get("vk"), r.get("key"), r.get("text")
-        if not (isinstance(mods, list) and set(mods) <= names and isinstance(vk, int) and 0 < vk < 255
-                and isinstance(key, str) and key and isinstance(text, str) and text):
-            raise ValueError("Every shortcut needs both keys and text.")
-        out.append({"mods": sorted(set(mods), key=[n for n, _, _ in MODS].index), "vk": vk, "key": key, "text": text})
+    if not isinstance(rows, list):
+        raise ValueError("Every shortcut needs both keys and text.")
+    out = [clean_mapping(r) for r in rows]
     if find_conflicts(out):
         raise ValueError("Two or more shortcuts use the same keys.")
     if picker and picker["enabled"] and combo_id(picker) in {combo_id(m) for m in out}:
@@ -135,6 +148,120 @@ def save(cfg):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG)  # atomic, so a crash can't leave a half-written config
+
+# ---------- keypacks: shareable sets of shortcuts in .kmppck files ----------
+# A keypack is JSON: {"format": "kemper-keypack", "version": 1, "name": ..., "mappings": [{"keys": "Alt+2", "text": "²"}]}.
+# Its name lives inside the file, so the file can be called anything. The "keys" form is easy for people and AI to
+# write; Kemper's exact form ({"mods", "vk", "key", "text"}) is accepted too and used for keys "keys" can't name.
+COMMON_COMBOS = {f"Ctrl + {k}" for k in "ACFNOPSTVWXYZ"}  # taking these over breaks copy, paste, save, …
+
+def keypack_mapping(m):
+    """One keypack shortcut in either form, validated. Raises ValueError."""
+    if isinstance(m, dict) and isinstance(m.get("keys"), str):
+        return clean_mapping({**parse_combo(m["keys"]), "text": m.get("text")})
+    return clean_mapping(m)
+
+def keypack_entry(m):
+    """How a shortcut is written into a keypack: the readable "keys" form whenever it reads back as the same keys."""
+    keys = combo_label(m).replace(" + ", "+")
+    try:
+        if combo_id(parse_combo(keys)) == combo_id(m):
+            return {"keys": keys, "text": m["text"]}
+    except ValueError:
+        pass
+    return m
+
+def parse_keypack(raw, fallback_name="Keypack"):
+    """Keypack text to {"name", "mappings"}. Lenient about text around the JSON (AI replies often add some),
+    strict about what's inside: it may be a stranger's. Raises ValueError."""
+    if len(raw) > KEYPACK_MAX_BYTES:
+        raise ValueError("This is too big to be a keypack.")
+    start, end = raw.find("{"), raw.rfind("}")
+    try:
+        data = json.loads(raw[start:end + 1]) if 0 <= start < end else None
+    except ValueError:
+        data = None
+    if not (isinstance(data, dict) and data.get("format") == "kemper-keypack" and isinstance(data.get("mappings"), list)):
+        raise ValueError("This isn't a Kemper keypack.")
+    version = data.get("version", 1)
+    if not isinstance(version, int) or version > 1:
+        raise ValueError("This keypack was made by a newer Kemper. Update Kemper to open it.")
+    if len(data["mappings"]) > KEYPACK_MAX_ITEMS:
+        raise ValueError(f"This keypack has more than {KEYPACK_MAX_ITEMS} shortcuts.")
+    mappings = []
+    for n, m in enumerate(data["mappings"], 1):
+        try:
+            mappings.append(keypack_mapping(m))
+        except ValueError as e:
+            keys = m.get("keys") if isinstance(m, dict) and isinstance(m.get("keys"), str) else ""
+            raise ValueError(f"Shortcut {n}{f' ({keys[:40]})' if keys else ''} in this keypack is broken: {e}") from None
+    name = data.get("name")
+    name = name.strip()[:100] if isinstance(name, str) and name.strip() else fallback_name
+    return {"name": name, "mappings": mappings}
+
+def read_keypack(path):
+    """Load a keypack file, possibly a stranger's: size-capped and every field validated. Raises ValueError."""
+    try:
+        if os.path.getsize(path) > KEYPACK_MAX_BYTES:
+            raise ValueError("This file is too big to be a keypack.")
+        with open(path, encoding="utf-8-sig") as f:  # -sig: Notepad may add a BOM
+            raw = f.read()
+    except OSError:
+        raise ValueError("Kemper couldn't open this file.") from None
+    except UnicodeDecodeError:
+        raise ValueError("This isn't a Kemper keypack.") from None
+    return parse_keypack(raw, os.path.splitext(os.path.basename(path))[0])
+
+def write_keypack(path, name, mappings):
+    """Save a keypack. Conflicting or half-filled shortcuts are refused, like in Kemper itself. Returns the name."""
+    name = name.strip()[:100] if isinstance(name, str) else ""
+    if not name:
+        raise ValueError("Give the keypack a name.")
+    mappings = clean_mappings(mappings)
+    if not mappings:
+        raise ValueError("Add at least one shortcut first.")
+    data = {"format": "kemper-keypack", "version": 1, "name": name, "made_with": f"Kemper {VERSION}",
+            "mappings": [keypack_entry(m) for m in mappings]}
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(path + ".tmp", path)
+    return name
+
+def keypack_filename(text):
+    """A safe Windows file name for a keypack, ending in .kmppck. Raises ValueError."""
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", str(text)).strip().rstrip(". ")
+    if stem.lower().endswith(KEYPACK_EXT):
+        stem = stem[:-len(KEYPACK_EXT)].rstrip(". ")
+    if not stem:
+        raise ValueError("Give the file a name.")
+    if re.fullmatch(r"(con|prn|aux|nul|com\d|lpt\d)", stem, re.I):
+        raise ValueError(f"Windows doesn't allow a file called {stem}. Pick another name.")
+    return stem[:120] + KEYPACK_EXT
+
+def keypack_preview(pack, cfg):
+    """Each keypack shortcut, plus what importing it would do to this Kemper (level: bad, warn, same or '')."""
+    mine = {combo_id(m): m for m in cfg["mappings"]}
+    ids = [combo_id(m) for m in pack]
+    picker = cfg["picker"]
+    items = []
+    for m in pack:
+        cid, label, old = combo_id(m), combo_label(m), mine.get(combo_id(m))
+        if old and old["text"] == m["text"]:
+            issue, level = "Already in your Kemper", "same"
+        elif ids.count(cid) > 1:
+            issue, level = "Used twice in this keypack", "bad"
+        elif old:
+            issue, level = f"Same keys as your {one_line(old['text'])[:24]}", "bad"
+        elif picker["enabled"] and cid == combo_id(picker):
+            issue, level = "Same keys as your quick picker", "bad"
+        elif set(m["mods"]) <= {"Shift"}:
+            issue, level = "Replaces normal typing of this key", "warn"
+        elif label in COMMON_COMBOS:
+            issue, level = f"Replaces {label} in every app", "warn"
+        else:
+            issue, level = "", ""
+        items.append({**m, "label": label, "issue": issue, "level": level})
+    return items
 
 def hotkey_flags(m):
     return MOD_NOREPEAT | sum(f for n, _, f in MODS if n in m["mods"])
@@ -243,6 +370,89 @@ def set_desktop(on):
     if r.returncode or not os.path.exists(lnk):
         raise OSError(r.stderr.decode(errors="replace").strip() or "couldn't create the shortcut")
 
+def keypack_cmd():
+    return f'"{pythonw()}" "{os.path.abspath(__file__)}" --keypack "%1"'
+
+def keypack_keys():
+    base = r"Software\Classes"
+    return {rf"{base}\{KEYPACK_EXT}": KEYPACK_PROGID, rf"{base}\{KEYPACK_PROGID}": "Kemper Keypack",
+            rf"{base}\{KEYPACK_PROGID}\DefaultIcon": icon_path(), rf"{base}\{KEYPACK_PROGID}\shell\open\command": keypack_cmd()}
+
+def keypacks_registered():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{KEYPACK_PROGID}\shell\open\command") as k:
+            return winreg.QueryValueEx(k, "")[0] == keypack_cmd()
+    except OSError:
+        return False
+
+def register_keypacks():
+    """Make .kmppck files open in Kemper, with Kemper's icon. Current user only, no admin; redone if Kemper moved."""
+    changed = False
+    for key, value in keypack_keys().items():
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                if winreg.QueryValueEx(k, "")[0] == value:
+                    continue
+        except OSError:
+            pass
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, value)
+        changed = True
+    if changed:
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # SHCNE_ASSOCCHANGED: refresh icons
+
+def delete_key_tree(path):
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+            subs = []
+            while True:
+                try:
+                    subs.append(winreg.EnumKey(k, len(subs)))
+                except OSError:
+                    break
+        for sub in subs:
+            delete_key_tree(path + "\\" + sub)
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+    except OSError:
+        pass
+
+def unregister_keypacks():
+    delete_key_tree(rf"Software\Classes\{KEYPACK_EXT}")
+    delete_key_tree(rf"Software\Classes\{KEYPACK_PROGID}")
+    ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+
+kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+kernel32.GlobalAlloc.argtypes = (wintypes.UINT, ctypes.c_size_t)
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalLock.argtypes = (wintypes.HGLOBAL,)
+kernel32.GlobalUnlock.argtypes = (wintypes.HGLOBAL,)
+user32.SetClipboardData.restype = wintypes.HANDLE
+user32.SetClipboardData.argtypes = (wintypes.UINT, wintypes.HANDLE)
+
+def set_clipboard(text):
+    """Put text on the Windows clipboard. Returns False if another app is holding the clipboard."""
+    data = text.encode("utf-16-le") + b"\0\0"
+    for _ in range(10):  # another app may have it open for a moment
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        return False
+    try:
+        user32.EmptyClipboard()
+        h = kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+        p = kernel32.GlobalLock(h)
+        ctypes.memmove(p, data, len(data))
+        kernel32.GlobalUnlock(h)
+        return bool(user32.SetClipboardData(13, h))  # CF_UNICODETEXT; Windows owns the memory now
+    finally:
+        user32.CloseClipboard()
+
+def documents_folder():
+    buf = ctypes.create_unicode_buffer(260)
+    ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)  # CSIDL_PERSONAL
+    return buf.value or os.path.expanduser("~")
+
 # ---------- window helpers ----------
 def os_is_dark():
     try:
@@ -269,8 +479,8 @@ def own_window(title=APP):
         if pid.value == os.getpid():
             return hwnd
 
-def dark_title_bar(dark):
-    hwnd = own_window()
+def dark_title_bar(dark, title=APP):
+    hwnd = own_window(title)
     if hwnd:
         val = ctypes.c_int(1 if dark else 0)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4)  # DWMWA_USE_IMMERSIVE_DARK_MODE
@@ -305,6 +515,11 @@ class Api:
         self._picker = None  # the quick picker popup; only exists when the window version runs
         self._picker_open = False
         self._picker_target = None  # the app that had focus when the picker opened
+        self._editor = None  # the Keypack Editor window, while it's open
+        self._editor_path = None
+        self._editor_ai = False  # open the editor straight into the AI sheet
+        self._editor_dirty = False
+        self._pending_keypack = None  # a .kmppck waiting for the import question
         self._quitting = False
         self._notice = ""
         self._on_fire, self._on_reload = on_fire, on_reload
@@ -379,6 +594,9 @@ class Api:
             self._cfg["appearance"] = mode
             save(self._cfg)
         dark_title_bar(bool(dark))
+        if self._editor:
+            self._editor.evaluate_js(f"setDark({json.dumps(bool(dark))})")
+            dark_title_bar(bool(dark), EDITOR_TITLE)
 
     def set_active(self, on):
         """Deactivate turns every shortcut off without closing Kemper; the choice survives restarts."""
@@ -394,8 +612,9 @@ class Api:
         self._done.set()
         if self._window:
             threading.Timer(2, os._exit, (0,)).start()  # backstop: Quit must always end the process
-            if self._picker:
-                self._picker.destroy()
+            for w in (self._picker, self._editor):
+                if w:
+                    w.destroy()
             self._window.destroy()
 
     def _on_closing(self):
@@ -403,6 +622,121 @@ class Api:
             return True
         self._window.hide()  # closing only hides; hotkeys keep working
         return False
+
+    # --- keypacks: importing into Kemper ---
+    def read_keypack(self, path):
+        try:
+            pack = read_keypack(path)
+        except (ValueError, TypeError) as e:
+            return {"ok": False, "error": str(e), "file": os.path.basename(str(path))}
+        return {"ok": True, "name": pack["name"], "file": os.path.basename(path), "folder": os.path.dirname(os.path.abspath(path)),
+                "items": keypack_preview(pack["mappings"], self._cfg)}
+
+    def take_pending_keypack(self):
+        path, self._pending_keypack = self._pending_keypack, None
+        return path
+
+    def _open_keypack(self, path):
+        if not self._window:
+            return  # --cli has no window to ask in
+        self._pending_keypack = path
+        self._window.show()
+        self._window.restore()
+        hwnd = own_window()
+        if hwnd:
+            user32.SetForegroundWindow(hwnd)
+        try:
+            self._window.evaluate_js("openPendingKeypack()")
+        except Exception:
+            pass  # page still loading; it asks for the pending keypack once it's ready
+
+    def choose_keypack(self):
+        import webview
+        r = self._window.create_file_dialog(webview.FileDialog.OPEN, directory=documents_folder(),
+                                            file_types=("Kemper keypacks (*.kmppck)", "All files (*.*)"))
+        return (r[0] if isinstance(r, (list, tuple)) else r) or None
+
+    # --- keypacks: the editor window ---
+    def open_editor(self, path=None, ai=False):
+        import webview
+        if self._editor:
+            self._editor.show()
+            self._editor.restore()
+            self._editor.evaluate_js("aiSheet()" if ai else f"requestLoad({json.dumps(path)})")
+            return
+        self._editor_path, self._editor_ai, self._editor_dirty = path, bool(ai), False
+        dark = self._dark()
+        self._editor = webview.create_window(EDITOR_TITLE, html=EDITOR_HTML, js_api=self, width=780, height=660,
+                                             min_size=(620, 460), background_color="#000000" if dark else "#F2F2F7",
+                                             text_select=True)
+        self._editor.events.closing += self._on_editor_closing
+        self._editor.events.closed += self._on_editor_closed
+        self._editor.events.shown += lambda: dark_title_bar(self._dark(), EDITOR_TITLE)
+
+    def editor_boot(self):
+        return {"dark": self._dark(), "path": self._editor_path, "ai": self._editor_ai}
+
+    # --- keypacks made by AI ---
+    def ai_instructions(self):
+        return AI_INSTRUCTIONS
+
+    def copy_text(self, text):
+        return set_clipboard(str(text))
+
+    def parse_keypack_text(self, text):
+        try:
+            pack = parse_keypack(str(text))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "name": pack["name"], "items": pack["mappings"]}
+
+    def my_mappings(self):
+        return [{**m, "label": combo_label(m)} for m in self._cfg["mappings"]]
+
+    def default_folder(self):
+        return documents_folder()
+
+    def choose_folder(self, start=""):
+        import webview
+        r = self._editor.create_file_dialog(webview.FileDialog.FOLDER, directory=start or documents_folder())
+        return (r[0] if isinstance(r, (list, tuple)) else r) or None
+
+    def export_keypack(self, name, filename, folder, rows, replace=False):
+        try:
+            fname = keypack_filename(filename)
+            if not (isinstance(folder, str) and os.path.isdir(folder)):
+                raise ValueError("Choose a folder that exists.")
+            path = os.path.join(folder, fname)
+            if os.path.exists(path) and not replace:
+                return {"ok": False, "exists": True, "file": fname}
+            name = write_keypack(path, name, rows)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": f"Kemper couldn't save it there: {e.strerror or e}"}
+        return {"ok": True, "path": path, "file": fname, "folder": folder, "name": name}
+
+    def show_in_folder(self, path):
+        if isinstance(path, str) and os.path.isfile(path):
+            subprocess.Popen(f'explorer /select,"{path}"')
+
+    def set_editor_dirty(self, dirty):
+        self._editor_dirty = bool(dirty)
+
+    def close_editor(self):
+        self._editor_dirty = False
+        if self._editor:
+            self._editor.destroy()
+
+    def _on_editor_closing(self):
+        if self._quitting or not self._editor_dirty:
+            return True
+        # ask in the page; this handler runs on the UI thread, which evaluate_js waits for, so ask from another thread
+        threading.Thread(target=lambda: self._editor and self._editor.evaluate_js("askClose()"), daemon=True).start()
+        return False
+
+    def _on_editor_closed(self):
+        self._editor, self._editor_dirty = None, False
 
     # --- quick picker (like Win+V for the clipboard, but for your shortcuts) ---
     def _open_picker(self):
@@ -420,10 +754,13 @@ class Api:
             user32.SetForegroundWindow(hwnd)  # allowed: we just received the hotkey
         self._picker_open = True
 
-    def picker_items(self):
+    def _dark(self):
         a = self._cfg["appearance"]
+        return a == "dark" or (a == "system" and os_is_dark())
+
+    def picker_items(self):
         return {"items": [{"i": i, "text": m["text"], "label": combo_label(m)} for i, m in enumerate(self._cfg["mappings"])],
-                "dark": a == "dark" or (a == "system" and os_is_dark())}
+                "dark": self._dark()}
 
     def close_picker(self, refocus=False):
         if not (self._picker and self._picker_open):
@@ -467,11 +804,18 @@ def serve(srv, api):
             conn = srv.accept()[0]
             with conn:
                 conn.settimeout(1)
+                cmd = b""
                 try:
-                    cmd = conn.recv(16)
+                    while len(cmd) < 8192:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        cmd += chunk
                 except OSError:
-                    cmd = b""
-            if cmd == b"quit":
+                    pass
+            if cmd.startswith(b"keypack\n"):
+                api._open_keypack(cmd[8:].decode("utf-8", "replace"))
+            elif cmd == b"quit":
                 api.quit()
             elif cmd == b"reload":
                 api._reload()
@@ -514,7 +858,7 @@ def parse_combo(text):
             raise ValueError(f"Unknown modifier '{p}'. Use Ctrl, Alt, Shift or Win.")
         if m not in mods:
             mods.append(m)
-    k = key.lower()
+    k = key.lower().replace(" ", "")  # "Page Up" and "Num 7" work too
     if k in NAMED_KEYS:
         vk = NAMED_KEYS[k]
     elif re.fullmatch(r"f([1-9]|1\d|2[0-4])", k):
@@ -575,6 +919,9 @@ def build_parser():
                    help="start Kemper when you sign in to Windows, or stop doing so (same as the switch in the window)")
     g.add_argument("--uninstall", action="store_true",
                    help="remove Kemper from this PC: stop it, remove it from startup, delete your settings and this file")
+    g.add_argument("--ai-instructions", action="store_true",
+                   help="print instructions that let an AI chat (ChatGPT, Claude, …) write keypacks for you")
+    g.add_argument("--keypack", metavar="FILE", help="open a keypack (.kmppck) and ask whether to import it, like double-clicking one")
     g.add_argument("--hidden", action="store_true", help="open with the window hidden (used when Windows starts)")
     p.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation (for --uninstall)")
     p.add_argument("-v", "--version", action="version", version=f"Kemper {VERSION}")
@@ -755,6 +1102,9 @@ def cmd_doctor():
     else:
         check(2, "The Windows startup entry points to a different place (was Kemper moved?). Fix:  python kemper.pyw --autostart on")
 
+    check(0 if keypacks_registered() else 1, "Keypack files (.kmppck) open in Kemper" if keypacks_registered() else
+          "Keypack files (.kmppck) aren't linked to Kemper yet. Fix: open Kemper's window once")
+
     if running:
         check(0, "Skipped the hotkey check because the running Kemper is holding them")
     else:
@@ -840,6 +1190,8 @@ def cmd_uninstall(yes):
     if desktop_enabled():
         set_desktop(False)
         print("Removed the desktop shortcut.")
+    unregister_keypacks()
+    print("Unlinked .kmppck keypack files from Kemper.")
     folder = os.path.dirname(CONFIG)
     if os.path.isdir(folder):
         shutil.rmtree(folder)
@@ -847,10 +1199,11 @@ def cmd_uninstall(yes):
     os.remove(me)
     print(f"Deleted {me}.\nKemper is uninstalled.")
 
-def run_gui(hidden):
+def run_gui(hidden, keypack=None):
     srv = claim_instance()
-    if not srv:  # already running: bring that window up instead
-        send_command(b"show")
+    if not srv:  # already running: hand over to it
+        user32.AllowSetForegroundWindow(-1)  # we were just clicked, so we may let it come to the front
+        send_command(b"keypack\n" + keypack.encode("utf-8") if keypack else b"show")
         return
     try:
         import webview  # imported here so the CLI works without it
@@ -864,11 +1217,16 @@ def run_gui(hidden):
                                  "Or use Kemper without a window:\n\n    python kemper.pyw --cli", APP, 0x10)
         return
     api = Api()
+    api._pending_keypack = keypack
     serve(srv, api)
+    try:
+        register_keypacks()
+    except OSError:
+        pass  # Kemper still works; only double-clicking keypacks won't
     cfg = api._cfg
     dark = cfg["appearance"] == "dark" or (cfg["appearance"] == "system" and os_is_dark())
     win = webview.create_window(APP, html=UI_HTML, js_api=api, width=540, height=680, min_size=(440, 480),
-                                hidden=hidden, background_color="#000000" if dark else "#F2F2F7", text_select=True)
+                                hidden=hidden and not keypack, background_color="#000000" if dark else "#F2F2F7", text_select=True)
     api._window = win
     win.events.closing += api._on_closing
     win.events.shown += lambda: dark_title_bar(dark)
@@ -914,6 +1272,10 @@ def main():
         cmd_autostart(a.autostart == "on")
     elif a.uninstall:
         cmd_uninstall(a.yes)
+    elif a.ai_instructions:
+        print(AI_INSTRUCTIONS)
+    elif a.keypack:
+        run_gui(False, os.path.abspath(a.keypack))
     else:
         run_gui(a.hidden)
 
@@ -1023,6 +1385,72 @@ UI_HTML = r'''<!doctype html>
   #save:active:not(:disabled) { transform: scale(.97); }
   #save:disabled { opacity: .35; cursor: default; }
   button:focus-visible, .text:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  /* rows that open something, like iOS settings */
+  .navrow { width: 100%; border: 0; background: none; color: var(--blue); font: inherit; text-align: left; padding: 0 16px;
+    min-height: 50px; cursor: pointer; display: flex; align-items: center; gap: 10px; position: relative; }
+  .navrow:hover { background: var(--seg); }
+  .navrow span { flex: 1; }
+  .navrow + .navrow::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); transform: scaleY(.5); transform-origin: top; }
+  .chev { width: 8px; height: 8px; border-right: 2px solid var(--sub); border-top: 2px solid var(--sub); transform: rotate(45deg); opacity: .6; margin-right: 4px; }
+
+  /* sheets: iOS-style dialogs over the page */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.32); display: grid; place-items: center; padding: 20px; z-index: 10;
+    opacity: 0; transition: opacity .2s ease; }
+  .overlay.show { opacity: 1; }
+  .overlay[hidden] { display: none; }
+  .sheet { background: var(--card); color: var(--text); border-radius: 16px; width: min(520px, 100%); max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    transform: translateY(12px) scale(.98); transition: transform .22s cubic-bezier(.3,.7,.4,1); }
+  .sheet.wide { width: min(700px, 100%); }
+  .overlay.show .sheet { transform: none; }
+  .shead { padding: 20px 20px 12px; }
+  .shead h2 { margin: 0; font-size: 19px; font-weight: 700; overflow-wrap: anywhere; }
+  .shead .sub { color: var(--sub); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+  .sbody { padding: 0 20px; overflow-y: auto; min-height: 0; flex: 1; }
+  .sbody p { margin: 0 0 6px; font-size: 14px; }
+  .sfoot { display: flex; gap: 10px; justify-content: flex-end; align-items: center; padding: 14px 20px 18px; }
+  .note { flex: 1; font-size: 12.5px; color: var(--sub); }
+  .note.err { color: var(--red); }
+  .note.warn { color: var(--orange); }
+  .btn { border: 0; border-radius: 10px; padding: 9px 18px; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--seg); color: var(--text); flex: none; }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .btn.danger { background: var(--red); color: #fff; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .choice { width: 100%; text-align: left; border: 0; background: var(--bg); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; color: var(--text); display: block; }
+  .choice:hover { background: var(--seg); }
+  .choice b { display: block; font-size: 15px; color: var(--blue); margin-bottom: 2px; }
+  .choice small { color: var(--sub); font-size: 12.5px; }
+  .plist { background: var(--bg); border-radius: 12px; overflow: hidden; }
+  .prow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; position: relative; }
+  .prow + .prow::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--sep); transform: scaleY(.5); transform-origin: top; }
+  .prow.bad { background: var(--red-bg); }
+  .prow .pill { width: 150px; height: 30px; line-height: 30px; text-align: center; cursor: default; }
+  .ptext { flex: 1; min-width: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .issue { flex: none; max-width: 42%; font-size: 11.5px; font-weight: 600; text-align: right; }
+  .issue.bad { color: var(--red); }
+  .issue.warn { color: var(--orange); }
+  .issue.same { color: var(--sub); }
+  .field { margin-bottom: 14px; }
+  .field > span { display: block; font-size: 12px; color: var(--sub); margin: 0 0 6px 2px; text-transform: uppercase; letter-spacing: .3px; }
+  .field small { display: block; font-size: 12px; color: var(--sub); margin: 6px 2px 0; }
+  .input { width: 100%; min-width: 0; border: 0; outline: 0; border-radius: 10px; background: var(--bg); color: var(--text); font-size: 15px;
+    padding: 10px 12px; user-select: text; -webkit-user-select: text; }
+  .input:focus-visible { outline: 2px solid var(--blue); }
+  .suffix, .folder { display: flex; align-items: center; gap: 8px; }
+  .area { width: 100%; min-height: 120px; border: 0; outline: 0; border-radius: 10px; background: var(--bg); color: var(--text); padding: 10px 12px;
+    font: 12.5px/1.45 "Cascadia Mono", Consolas, monospace; resize: vertical; user-select: text; -webkit-user-select: text; }
+  .area:focus-visible { outline: 2px solid var(--blue); }
+  .step { display: flex; gap: 12px; margin-bottom: 16px; }
+  .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700;
+    display: grid; place-items: center; margin-top: 1px; }
+  .step .body { flex: 1; min-width: 0; }
+  .step .body > b { display: block; font-size: 14.5px; margin-bottom: 3px; }
+  .step .body > small { display: block; color: var(--sub); font-size: 12.5px; }
+  .btns { display: flex; gap: 8px; margin-top: 9px; }
+  .suffix em { color: var(--sub); font-style: normal; flex: none; }
+  .folder .path { flex: 1; min-width: 0; background: var(--bg); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--sub);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
@@ -1069,13 +1497,22 @@ UI_HTML = r'''<!doctype html>
   <div class="section-title">Key → Text</div>
   <div class="card" id="list"></div>
   <div class="section-foot" id="hint">Click a key box, then press the combo, like Alt + 2. Paste or type the text it should produce, like ².</div>
+
+  <div class="section-title">Keypacks</div>
+  <div class="card">
+    <button class="navrow" id="kpCreate"><span>Create a keypack</span><i class="chev"></i></button>
+    <button class="navrow" id="kpImport"><span>Import a keypack…</span><i class="chev"></i></button>
+  </div>
+  <div class="section-foot">Keypacks are sets of shortcuts in .kmppck files that you can share. Double-click one to import it.</div>
 </main>
 <footer>
   <div id="status"></div>
   <button id="save" disabled>Save</button>
 </footer>
+<div class="overlay" id="overlay" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
 
 <script>
+/*SHARED_JS*/
 let api, rows = [], picker = null, saved = "", notice = "", recording = null, appearance = "system", active = true;
 const $ = s => document.querySelector(s);
 const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
@@ -1152,7 +1589,7 @@ function validate() {
   else if (rows.some(r => !r.vk || !r.text)) msg = "Every shortcut needs both keys and text.";
   else if (snapshot() === saved && !active) msg = "Kemper is deactivated. Shortcuts won't type anything until you activate it.";
   else if (snapshot() === saved) { msg = notice || "All changes saved. Shortcuts are active."; err = !!notice; }
-  else { msg = "You have unsaved changes."; ok = true; }
+  else { msg = lastImport || "You have unsaved changes."; ok = true; }
   $("#status").textContent = msg;
   $("#status").classList.toggle("err", err);
   $("#save").disabled = !ok;
@@ -1174,6 +1611,10 @@ async function stopRecording(update) {
   validate();
 }
 document.addEventListener("keydown", async e => {
+  if (sheetOpen) {
+    if (e.key === "Escape") { e.preventDefault(); closeSheet(); }
+    return;
+  }
   if (recording === null) {
     if (e.key === "s" && e.ctrlKey && !$("#save").disabled) { e.preventDefault(); $("#save").click(); }
     return;
@@ -1202,6 +1643,7 @@ $("#save").onclick = async () => {
   rows = res.mappings;
   picker = res.picker;
   saved = snapshot();
+  lastImport = "";
   notice = res.notice;
   render();
 };
@@ -1247,7 +1689,63 @@ async function refresh() {
   active = s.active;
   showActive();
   applyTheme(false);
+  lastImport = "";
   render();
+  openPendingKeypack();
+}
+
+// ---------- keypacks ----------
+let lastImport = "";
+function choice(title, sub, onclick) {
+  const b = el("button", "choice");
+  b.append(el("b", "", title), el("small", "", sub));
+  b.onclick = onclick;
+  return b;
+}
+$("#kpCreate").onclick = () => openSheet("Create a keypack", "A keypack is a set of shortcuts in one .kmppck file that you can share.", [
+  choice("New keypack", "Start from scratch in the Keypack Editor.", () => { closeSheet(); api.open_editor(null); }),
+  choice("Make one with AI…", "Describe what you want to an AI chat, then paste its answer into the Keypack Editor.", () => { closeSheet(); api.open_editor(null, true); }),
+  choice("Edit a keypack file…", "Open a .kmppck file in the Keypack Editor and change it.", async () => {
+    const p = await api.choose_keypack();
+    if (p) { closeSheet(); api.open_editor(p); }
+  }),
+], [button("Cancel", "", closeSheet)]);
+$("#kpImport").onclick = async () => { const p = await api.choose_keypack(); if (p) openKeypack(p); };
+
+// The import question: what's in the keypack, and what it would clash with. Conflicts don't block importing,
+// they only block saving, the same as conflicts you make yourself.
+async function openKeypack(path) {
+  const r = await api.read_keypack(path);
+  if (!r.ok) return openSheet("Can't open this keypack", r.file, el("p", "", r.error), [button("OK", "primary", closeSheet)]);
+  const count = level => r.items.filter(i => i.level === level).length;
+  const bad = count("bad"), warn = count("warn"), fresh = r.items.length - count("same");
+  const list = el("div", "plist");
+  r.items.forEach(it => {
+    const row = el("div", "prow" + (it.level === "bad" ? " bad" : ""));
+    row.append(el("div", "pill" + (it.level === "bad" ? " bad" : ""), it.label), el("div", "ptext", it.text.replace(/\r?\n/g, " ⏎ ")));
+    if (it.issue) row.append(el("div", "issue " + it.level, it.issue));
+    list.append(row);
+  });
+  let note, cls = "note";
+  if (!r.items.length) note = "This keypack is empty.";
+  else if (!fresh) note = "Everything in this keypack is already in your Kemper.";
+  else if (bad) { note = `${bad} conflict${bad > 1 ? "s" : ""}. You can import, but Kemper won't save until you change the red ones.`; cls += " err"; }
+  else if (warn) { note = "No conflicts, but the orange ones take over keys you may use a lot."; cls += " warn"; }
+  else note = "No conflicts.";
+  const go = button(fresh ? `Import ${fresh}` : "Import", "primary", () => {
+    r.items.filter(i => i.level !== "same").forEach(i => rows.push({ mods: i.mods, vk: i.vk, key: i.key, text: i.text }));
+    lastImport = `Imported ${fresh} shortcut${fresh > 1 ? "s" : ""} from “${r.name}”. Save to keep them.`;
+    closeSheet();
+    render();
+    $("main").scrollTo({ top: 1e6, behavior: "smooth" });
+  });
+  go.disabled = !fresh;
+  openSheet(`Import “${r.name}”?`, `${r.file} · ${r.items.length} shortcut${r.items.length === 1 ? "" : "s"}`,
+            list, [el("div", cls, note), button("Cancel", "", closeSheet), go], true);
+}
+async function openPendingKeypack() {
+  const p = await api.take_pending_keypack();
+  if (p) openKeypack(p);
 }
 window.addEventListener("pywebviewready", () => { api = window.pywebview.api; refresh(); });
 </script>
@@ -1375,6 +1873,571 @@ window.addEventListener("pywebviewready", () => { api = window.pywebview.api; })
 </body>
 </html>
 '''
+
+# ---------- instructions that teach an AI chat to write keypacks (also in docs/AI_INSTRUCTIONS.md) ----------
+AI_INSTRUCTIONS = r'''# Instructions: create a Kemper keypack
+
+You are helping someone make a keypack for Kemper, a Windows app that types a character or some text whenever a key combination is pressed (for example, Alt+2 types ²). A keypack is a JSON file with the extension .kmppck that holds a named set of these shortcuts. After these instructions, the person will tell you what they want; build the keypack from that.
+
+## Your reply
+
+1. Put the complete keypack in a single ```json code block. Inside the block, write only the JSON, with no comments.
+2. Below the block, add a short table of the combos and what each one types, so the person knows which keys to press.
+3. If the request is too vague to choose good shortcuts, ask one short question first. Otherwise, make sensible choices yourself.
+
+## The format
+
+```json
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Short descriptive name",
+  "mappings": [
+    { "keys": "Alt+2", "text": "²" }
+  ]
+}
+```
+
+- "format" must be exactly "kemper-keypack", and "version" must be 1.
+- "name" is what people see when they import the keypack: 1 to 100 characters.
+- "mappings" is the list of shortcuts, from 1 to 1000 of them. Each one has exactly two fields, "keys" and "text".
+
+## "keys": the key combination
+
+- Write it as modifiers plus one key, joined with +, for example "Ctrl+Alt+E" or "Alt+Shift+2".
+- Modifiers: Ctrl, Alt, Shift, Win.
+- Keys:
+  - letters A-Z and digits 0-9
+  - F1-F24
+  - Num0-Num9 (number pad)
+  - Space, Enter, Tab, Esc, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Left, Right, Up, Down
+  - the punctuation keys - = [ ] ; ' , . / ` \
+- Name the physical key on a US keyboard. A character that needs Shift is written as Shift plus its key: "Shift+1", never "!".
+- Every mapping must use a different combination. Modifier order doesn't matter: "Alt+Shift+2" and "Shift+Alt+2" are the same combination.
+- Always include Ctrl or Alt. Shift alone, or no modifier at all, would replace normal typing.
+- Don't use combinations that Windows or most apps already need:
+  - Ctrl+A, C, F, N, O, P, S, T, V, W, X, Y and Z
+  - Alt+Tab, Alt+F4 and Ctrl+Alt+Delete
+  - Win+anything
+- Prefer Ctrl+Alt+key, Alt+key and Alt+Shift+key.
+- Make combos easy to remember:
+  - use the first letter, or a key the output looks like (Ctrl+Alt+E for €, Alt+A for α)
+  - use Shift for a variant (Alt+2 → ², Alt+Shift+2 → ₂)
+  - use arrow keys for arrows
+
+## "text": what gets typed
+
+- Any Unicode text from 1 to 10,000 characters: a symbol, an emoji, a word or whole sentences.
+- Write a line break as \n (Kemper presses Enter there). Escape " and \ the way JSON requires.
+
+## What the person does with your reply
+
+They copy your reply into Kemper (Keypack Editor → AI → paste), or save the JSON as a file ending in .kmppck and double-click it. Kemper then shows every shortcut and any conflicts before importing.
+
+## Example
+
+Request: "Greek letters for my math notes: alpha, beta, pi and sigma, plus capital sigma."
+
+```json
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Greek letters for math",
+  "mappings": [
+    { "keys": "Alt+A", "text": "α" },
+    { "keys": "Alt+B", "text": "β" },
+    { "keys": "Alt+P", "text": "π" },
+    { "keys": "Alt+S", "text": "σ" },
+    { "keys": "Alt+Shift+S", "text": "Σ" }
+  ]
+}
+```
+
+| Press | Types |
+|---|---|
+| Alt+A | α |
+| Alt+B | β |
+| Alt+P | π |
+| Alt+S | σ |
+| Alt+Shift+S | Σ |'''
+
+# ---------- JS shared by the window and the Keypack Editor: DOM helpers and iOS-style sheets ----------
+SHARED_JS = r'''
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function button(text, cls, onclick) {
+  const b = el("button", "btn" + (cls ? " " + cls : ""), text);
+  b.onclick = onclick;
+  return b;
+}
+let sheetOpen = false;
+function openSheet(title, sub, body, foot, wide) {
+  const s = document.getElementById("sheet"), o = document.getElementById("overlay");
+  s.replaceChildren();
+  s.classList.toggle("wide", !!wide);
+  const head = el("div", "shead");
+  head.append(el("h2", "", title));
+  if (sub) head.append(el("div", "sub", sub));
+  const b = el("div", "sbody");
+  if (body) b.append(...[].concat(body));
+  const f = el("div", "sfoot");
+  f.append(...foot);
+  s.append(head, b, f);
+  o.hidden = false;
+  sheetOpen = true;
+  requestAnimationFrame(() => o.classList.add("show"));
+  (f.querySelector(".primary:not(:disabled)") || f.querySelector("button"))?.focus();
+}
+function closeSheet() {
+  const o = document.getElementById("overlay");
+  o.classList.remove("show");
+  sheetOpen = false;
+  setTimeout(() => { if (!sheetOpen) o.hidden = true; }, 220);
+}
+document.getElementById("overlay").addEventListener("mousedown", e => { if (e.target.id === "overlay") closeSheet(); });
+'''
+
+# ---------- the Keypack Editor's page (styles come from the main window's page) ----------
+EDITOR_HTML = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kemper Keypack Editor</title>
+<style>
+/*KEMPER_CSS*/
+  :root { --sel-bg: rgba(0,122,255,.07); }
+  :root.dark { --sel-bg: rgba(10,132,255,.16); }
+  .toolbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--bar);
+    border-bottom: 1px solid var(--sep); backdrop-filter: saturate(180%) blur(20px); }
+  .mid { flex: 1; display: flex; justify-content: center; align-items: center; gap: 6px; }
+  .tool { border: 0; background: var(--seg); color: var(--text); border-radius: 9px; padding: 8px 13px; font-size: 13.5px; font-weight: 600;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background-color .15s ease, opacity .15s ease; }
+  .tool:hover:not(:disabled) { background: var(--sep); }
+  .tool:disabled { opacity: .35; cursor: default; }
+  .tool.primary { background: var(--blue); color: #fff; }
+  .tool.primary:hover:not(:disabled) { background: var(--blue); filter: brightness(1.08); }
+  .tool .ic { font-size: 15px; line-height: 1; }
+  .tsep { width: 1px; height: 22px; background: var(--sep); margin: 0 4px; }
+  .packhead { margin: 2px 4px 16px; }
+  .packname { font: 700 26px/1.15 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; letter-spacing: -.3px; overflow-wrap: anywhere; }
+  .packfile { color: var(--sub); font-size: 12.5px; margin-top: 4px; }
+  #canvas .row { cursor: default; }
+  #canvas .row.sel { background: var(--sel-bg); box-shadow: inset 3px 0 0 var(--blue); }
+  #canvas .row.bad.sel { background: var(--red-bg); }
+  .empty { text-align: center; color: var(--sub); padding: 70px 30px; border: 2px dashed var(--sep); border-radius: 14px; }
+  .empty b { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+  .gtools { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 13px; color: var(--sub); }
+  .link2 { border: 0; background: none; color: var(--blue); font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+  .link2:hover { background: var(--seg); }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; padding-bottom: 4px; }
+  .tile { position: relative; border: 2px solid transparent; background: var(--bg); border-radius: 12px; padding: 16px 8px 10px; cursor: pointer;
+    color: var(--text); text-align: center; min-width: 0; transition: border-color .12s ease, background-color .12s ease; }
+  .tile:hover:not(:disabled) { border-color: var(--sep); }
+  .tile.on { border-color: var(--blue); background: var(--sel-bg); }
+  .tile .g { font-size: 26px; height: 34px; line-height: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .g.long { font-size: 14px; }
+  .tile .c { font-size: 11px; font-weight: 600; color: var(--sub); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .chk { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--sep); background: var(--card); }
+  .tile.on .chk { background: var(--blue); border-color: var(--blue); }
+  .tile.on .chk::after { content: ""; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .tile:disabled { opacity: .45; cursor: default; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="tool" id="importBtn" title="Add shortcuts from your Kemper"><span class="ic">⤓</span>Import</button>
+  <button class="tool" id="aiBtn" title="Make shortcuts with an AI chat"><span class="ic">✦</span>AI</button>
+  <div class="mid">
+    <button class="tool" id="addBtn" title="Add a shortcut (Ctrl+N)"><span class="ic">＋</span>Add</button>
+    <button class="tool" id="removeBtn" title="Remove the selected shortcut (Delete)"><span class="ic">－</span>Remove</button>
+    <span class="tsep"></span>
+    <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><span class="ic">↶</span>Undo</button>
+    <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><span class="ic">↷</span>Redo</button>
+  </div>
+  <button class="tool primary" id="exportBtn" title="Save as a .kmppck file (Ctrl+S)">Export</button>
+</div>
+<main>
+  <div class="packhead"><div class="packname" id="packName"></div><div class="packfile" id="packFile"></div></div>
+  <div id="canvas"></div>
+</main>
+<footer><div id="status"></div></footer>
+<div class="overlay" id="overlay" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<script>
+/*SHARED_JS*/
+let api, rows = [], name = "", file = "", folder = "", sel = -1, recording = null, saved = "", dirtySent = false;
+let undo = [], redo = [], lastKey = "", lastTime = 0;
+const $ = s => document.querySelector(s);
+const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
+const MOD_KEYS = ["Control", "Alt", "Shift", "Meta", "AltGraph", "OS"];
+const HISTORY = 50;
+const id = r => [...r.mods].sort().join("+") + "|" + r.vk;
+const label = r => [...r.mods].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).concat(r.key).join(" + ");
+const snap = () => JSON.stringify({ name, rows });
+const plain = m => ({ mods: m.mods, vk: m.vk, key: m.key, text: m.text });
+
+// ---------- undo / redo: each change first stores the state before it (last 50 kept) ----------
+// Typing in one text field counts as one step until you pause for 1.5 s or move elsewhere.
+function remember(key) {
+  const now = Date.now();
+  if (key && key === lastKey && now - lastTime < 1500) { lastTime = now; return; }
+  lastKey = key || "";
+  lastTime = now;
+  undo.push(snap());
+  if (undo.length > HISTORY) undo.shift();
+  redo = [];
+}
+function restore(state) {
+  const o = JSON.parse(state);
+  name = o.name;
+  rows = o.rows;
+  sel = Math.min(sel, rows.length - 1);
+  lastKey = "";
+}
+function doUndo() {
+  if (!undo.length || recording !== null) return;
+  redo.push(snap());
+  restore(undo.pop());
+  render();
+}
+function doRedo() {
+  if (!redo.length || recording !== null) return;
+  undo.push(snap());
+  restore(redo.pop());
+  render();
+}
+
+// ---------- the canvas ----------
+function conflicts() {
+  const n = {};
+  rows.filter(r => r.vk).forEach(r => n[id(r)] = (n[id(r)] || 0) + 1);
+  return new Set(Object.keys(n).filter(k => n[k] > 1));
+}
+function render() {
+  $("#packName").textContent = name || "New keypack";
+  $("#packFile").textContent = file || "Not exported yet";
+  const c = $("#canvas");
+  c.replaceChildren();
+  if (!rows.length) {
+    const e = el("div", "empty");
+    e.append(el("b", "", "This keypack is empty"), el("span", "", "Click Add to make a shortcut, or Import to bring in shortcuts from your Kemper."));
+    c.append(e);
+  } else {
+    const card = el("div", "card");
+    rows.forEach((r, i) => {
+      const row = el("div", "row");
+      row.onmousedown = () => select(i);
+      const pill = el("button", "pill");
+      pill.onclick = e => { e.stopPropagation(); select(i); recording === null ? startRecording(i) : stopRecording(null); };
+      const text = el("input", "text");
+      text.placeholder = "Text to type";
+      text.value = r.text;
+      text.spellcheck = false;
+      text.onfocus = () => select(i);
+      text.oninput = () => { remember("text" + i); r.text = text.value; changed(); };
+      row.append(pill, text);
+      card.append(row);
+    });
+    c.append(card);
+  }
+  changed();
+}
+function select(i) {
+  sel = i;
+  [...document.querySelectorAll("#canvas .row")].forEach((r, n) => r.classList.toggle("sel", n === sel));
+  $("#removeBtn").disabled = sel < 0 || recording !== null;
+}
+function changed() {
+  const dup = conflicts();
+  [...document.querySelectorAll("#canvas .row")].forEach((row, i) => {
+    const r = rows[i], pill = row.querySelector(".pill"), bad = !!r.vk && dup.has(id(r));
+    row.classList.toggle("bad", bad);
+    row.classList.toggle("sel", i === sel);
+    pill.className = "pill" + (recording === i ? " recording" : bad ? " bad" : r.vk ? "" : " empty");
+    pill.textContent = recording === i ? "Press keys…" : r.vk ? label(r) : "Set keys";
+    pill.title = recording === i ? "Press a key combo · Esc to cancel" : "Click to change";
+  });
+  const busy = recording !== null, incomplete = rows.some(r => !r.vk || !r.text), dirty = snap() !== saved;
+  let msg, err = false;
+  if (busy) msg = "Press the combo now. Esc cancels.";
+  else if (!rows.length) msg = "Add shortcuts, then export the keypack to share it.";
+  else if (dup.size) { msg = "Two shortcuts use the same keys. Change the red ones before exporting."; err = true; }
+  else if (incomplete) msg = "Every shortcut needs both keys and text.";
+  else msg = `${rows.length} shortcut${rows.length === 1 ? "" : "s"}` + (dirty ? " · not exported yet" : " · exported");
+  $("#status").textContent = msg;
+  $("#status").classList.toggle("err", err);
+  $("#undoBtn").disabled = !undo.length || busy;
+  $("#redoBtn").disabled = !redo.length || busy;
+  $("#removeBtn").disabled = sel < 0 || busy;
+  $("#addBtn").disabled = $("#importBtn").disabled = $("#aiBtn").disabled = busy;
+  $("#exportBtn").disabled = busy || !rows.length || !!dup.size || incomplete;
+  if (dirty !== dirtySent && api) { dirtySent = dirty; api.set_editor_dirty(dirty); }
+}
+function addRow() {
+  if (recording !== null) return;
+  remember();
+  rows.push({ mods: [], vk: 0, key: "", text: "" });
+  sel = rows.length - 1;
+  render();
+  startRecording(sel);
+  $("main").scrollTo({ top: 1e6, behavior: "smooth" });
+}
+function removeRow() {
+  if (sel < 0 || recording !== null) return;
+  remember();
+  rows.splice(sel, 1);
+  sel = Math.min(sel, rows.length - 1);
+  render();
+}
+
+// ---------- recording combos, as in Kemper's window ----------
+async function startRecording(i) {
+  if (recording !== null) return;
+  document.activeElement?.blur();
+  recording = i;
+  changed();
+  await api.capture(true);
+}
+async function stopRecording(update) {
+  const i = recording;
+  recording = null;
+  if (update) { remember(); Object.assign(rows[i], update); }
+  await api.capture(false);
+  changed();
+}
+document.addEventListener("keydown", async e => {
+  if (sheetOpen) {
+    if (e.key === "Escape") { e.preventDefault(); closeSheet(); }
+    return;
+  }
+  if (recording !== null) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (MOD_KEYS.includes(e.key)) return;
+    const mods = [];
+    if (e.ctrlKey) mods.push("Ctrl");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Win");
+    if (e.key === "Escape" && !mods.length) return stopRecording(null);
+    const vk = e.keyCode, i = recording;
+    await stopRecording({ mods, vk, key: await api.key_name(vk) });
+    const input = document.querySelectorAll("#canvas .text")[i];
+    if (input && !input.value) input.focus();
+    return;
+  }
+  const k = e.key.toLowerCase(), typing = document.activeElement?.tagName === "INPUT";
+  if (e.ctrlKey && k === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); }
+  else if (e.ctrlKey && (k === "y" || (k === "z" && e.shiftKey))) { e.preventDefault(); doRedo(); }
+  else if (e.ctrlKey && k === "s") { e.preventDefault(); exportSheet(); }
+  else if (e.ctrlKey && k === "n") { e.preventDefault(); addRow(); }
+  else if (e.key === "Delete" && !typing) { e.preventDefault(); removeRow(); }
+}, true);
+document.addEventListener("click", () => { if (recording !== null) stopRecording(null); });
+window.addEventListener("blur", () => { if (recording !== null) stopRecording(null); });
+
+// ---------- import from Kemper: a gallery to pick from ----------
+async function importSheet() {
+  const mine = await api.my_mappings();
+  if (!mine.length) return openSheet("Import from Kemper", "", el("p", "", "You don't have any shortcuts in Kemper yet."), [button("OK", "primary", closeSheet)]);
+  const have = new Set(rows.map(r => id(r) + "\u0000" + r.text));
+  const selectable = mine.map((m, i) => i).filter(i => !have.has(id(mine[i]) + "\u0000" + mine[i].text));
+  const chosen = new Set();
+  const grid = el("div", "gallery"), count = el("span"), all = el("button", "link2");
+  const add = button("Add", "primary", () => {
+    remember();
+    mine.filter((m, i) => chosen.has(i)).forEach(m => rows.push(plain(m)));
+    sel = rows.length - 1;
+    closeSheet();
+    render();
+    $("main").scrollTo({ top: 1e6, behavior: "smooth" });
+  });
+  function update() {
+    [...grid.children].forEach((t, i) => t.classList.toggle("on", chosen.has(i)));
+    count.textContent = `${chosen.size} of ${selectable.length} selected`;
+    all.textContent = selectable.length && chosen.size === selectable.length ? "Deselect all" : "Select all";
+    all.disabled = !selectable.length;
+    add.textContent = chosen.size ? `Add ${chosen.size}` : "Add";
+    add.disabled = !chosen.size;
+  }
+  all.onclick = () => {
+    if (chosen.size === selectable.length) chosen.clear();
+    else selectable.forEach(i => chosen.add(i));
+    update();
+  };
+  mine.forEach((m, i) => {
+    const t = el("button", "tile"), inPack = !selectable.includes(i);
+    t.disabled = inPack;
+    t.title = inPack ? "Already in this keypack" : m.text;
+    t.append(el("span", "chk"), el("div", "g" + ([...m.text].length > 3 ? " long" : ""), m.text.replace(/\r?\n/g, " ⏎ ")),
+             el("div", "c", inPack ? "In keypack" : m.label));
+    t.onclick = () => { chosen.has(i) ? chosen.delete(i) : chosen.add(i); update(); };
+    grid.append(t);
+  });
+  const tools = el("div", "gtools");
+  tools.append(count, all);
+  openSheet("Import from Kemper", "Pick the shortcuts to add to this keypack.", [tools, grid], [button("Cancel", "", closeSheet), add], true);
+  update();
+}
+
+// ---------- AI: copy the instructions, describe what you want to any AI chat, paste its answer ----------
+async function aiSheet() {
+  if (sheetOpen || recording !== null) return;
+  const instructions = await api.ai_instructions();
+  const step = (n, title, sub, ...extra) => {
+    const s = el("div", "step"), b = el("div", "body");
+    b.append(el("b", "", title), el("small", "", sub), ...extra);
+    s.append(el("div", "n", n), b);
+    return s;
+  };
+  const view = el("textarea", "area");
+  view.readOnly = true;
+  view.value = instructions;
+  view.hidden = true;
+  const copy = button("Copy instructions", "primary", async () => {
+    copy.textContent = (await api.copy_text(instructions)) ? "Copied ✓" : "Couldn't copy. Try again";
+    setTimeout(() => { copy.textContent = "Copy instructions"; }, 2000);
+  });
+  const show = button("Show", "", () => { view.hidden = !view.hidden; show.textContent = view.hidden ? "Show" : "Hide"; });
+  const btns = el("div", "btns");
+  btns.append(copy, show);
+  const answer = el("textarea", "area");
+  answer.placeholder = "Paste the AI's whole answer here. Kemper finds the keypack in it.";
+  answer.spellcheck = false;
+  const note = el("div", "note");
+  const add = button("Add to keypack", "primary", async () => {
+    const r = await api.parse_keypack_text(answer.value);
+    if (!r.ok) { note.textContent = r.error; note.className = "note err"; return; }
+    remember();
+    r.items.forEach(m => rows.push(plain(m)));
+    if (!name) name = r.name;
+    sel = rows.length - 1;
+    closeSheet();
+    render();
+    $("main").scrollTo({ top: 1e6, behavior: "smooth" });
+  });
+  answer.oninput = () => { add.disabled = !answer.value.trim(); note.textContent = ""; note.className = "note"; };
+  add.disabled = true;
+  openSheet("Make a keypack with AI", "Works with ChatGPT, Claude, Gemini, Copilot or any other AI chat.", [
+    step("1", "Copy the instructions into a new AI chat", "They teach the AI how Kemper keypacks work.", btns, view),
+    step("2", "Tell it what you want", "For example: “Greek letters for math, and arrows on Ctrl+Alt with the arrow keys.”"),
+    step("3", "Paste its answer here", "The shortcuts are added to this keypack, where you can check and change them before exporting.", answer),
+  ], [note, button("Cancel", "", closeSheet), add], true);
+  copy.focus();
+}
+
+// ---------- export ----------
+const safeName = s => s.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/\s+/g, " ").replace(/[. ]+$/, "");
+function field(title, control, hint) {
+  const f = el("div", "field");
+  f.append(el("span", "", title), control);
+  if (hint) f.append(el("small", "", hint));
+  return f;
+}
+async function exportSheet() {
+  if ($("#exportBtn").disabled || sheetOpen) return;
+  if (!folder) folder = await api.default_folder();
+  const nameIn = el("input", "input"), fileIn = el("input", "input");
+  nameIn.value = name;
+  nameIn.placeholder = "Math symbols";
+  nameIn.maxLength = 100;
+  fileIn.value = file ? file.replace(/\.kmppck$/i, "") : safeName(name);
+  fileIn.placeholder = "Math symbols";
+  let fileEdited = !!file, replace = false;
+  const where = el("div", "path", folder);
+  const note = el("div", "note");
+  const go = button("Export", "primary", async () => {
+    const res = await api.export_keypack(nameIn.value, fileIn.value, folder, rows.map(plain), replace);
+    if (res.exists) {
+      replace = true;
+      go.textContent = "Replace";
+      go.className = "btn danger";
+      note.textContent = `${res.file} is already in this folder. Click Replace to overwrite it.`;
+      note.className = "note err";
+      return;
+    }
+    if (!res.ok) { note.textContent = res.error; note.className = "note err"; return; }
+    name = res.name;
+    file = res.file;
+    folder = res.folder;
+    saved = snap();
+    render();
+    openSheet("Keypack exported", res.path, el("p", "", `“${name}” is ready to share. Double-clicking the file opens Kemper and asks whether to import it.`),
+              [button("Show in folder", "", () => api.show_in_folder(res.path)), button("Done", "primary", closeSheet)]);
+  });
+  const reset = () => { replace = false; go.textContent = "Export"; go.className = "btn primary"; note.textContent = ""; note.className = "note"; };
+  nameIn.oninput = () => { if (!fileEdited) fileIn.value = safeName(nameIn.value); reset(); };
+  fileIn.oninput = () => { fileEdited = true; reset(); };
+  const choose = button("Choose…", "", async () => {
+    const f = await api.choose_folder(folder);
+    if (f) { folder = f; where.textContent = f; reset(); }
+  });
+  const sfx = el("div", "suffix"), fold = el("div", "folder");
+  sfx.append(fileIn, el("em", "", ".kmppck"));
+  fold.append(where, choose);
+  openSheet("Export keypack", `${rows.length} shortcut${rows.length === 1 ? "" : "s"}`, [
+    field("Keypack name", nameIn, "Shown when someone imports it. It can differ from the file name."),
+    field("File name", sfx),
+    field("Folder", fold),
+  ], [note, button("Cancel", "", closeSheet), go]);
+  nameIn.focus();
+}
+
+// ---------- opening, closing ----------
+async function load(path) {
+  name = ""; file = ""; rows = []; sel = -1; undo = []; redo = []; lastKey = "";
+  if (path) {
+    const r = await api.read_keypack(path);
+    if (r.ok) {
+      name = r.name;
+      file = r.file;
+      folder = r.folder;
+      rows = r.items.map(plain);
+    } else {
+      openSheet("Can't open this keypack", r.file, el("p", "", r.error), [button("OK", "primary", closeSheet)]);
+    }
+  }
+  saved = snap();
+  render();
+}
+// Kemper calls this when you pick New or Edit while the editor is already open.
+function requestLoad(path) {
+  if (snap() === saved) return load(path);
+  openSheet("Discard your changes?", "This keypack has changes you haven't exported.", null,
+            [button("Keep editing", "", closeSheet), button("Discard", "danger", () => { closeSheet(); load(path); })]);
+}
+// Kemper calls this when you close the window with changes you haven't exported.
+function askClose() {
+  openSheet("Close without exporting?", "Your changes to this keypack will be lost.", null,
+            [button("Keep editing", "", closeSheet), button("Discard", "danger", () => api.close_editor())]);
+}
+function setDark(d) { document.documentElement.classList.toggle("dark", d); }
+
+$("#importBtn").onclick = e => { e.stopPropagation(); importSheet(); };
+$("#aiBtn").onclick = e => { e.stopPropagation(); aiSheet(); };
+$("#addBtn").onclick = e => { e.stopPropagation(); addRow(); };
+$("#removeBtn").onclick = removeRow;
+$("#undoBtn").onclick = doUndo;
+$("#redoBtn").onclick = doRedo;
+$("#exportBtn").onclick = exportSheet;
+window.addEventListener("pywebviewready", async () => {
+  api = window.pywebview.api;
+  const b = await api.editor_boot();
+  setDark(b.dark);
+  await load(b.path);
+  if (b.ai) aiSheet();
+});
+</script>
+</body>
+</html>
+'''
+
+UI_HTML = UI_HTML.replace("/*SHARED_JS*/", SHARED_JS)
+EDITOR_HTML = (EDITOR_HTML.replace("/*KEMPER_CSS*/", re.search(r"<style>(.*?)</style>", UI_HTML, re.S).group(1))
+               .replace("/*SHARED_JS*/", SHARED_JS))
 
 # ---------- Kemper's icon: PNGs by size, turned into an .ico by icon_path() ----------
 ICON_PNGS = {

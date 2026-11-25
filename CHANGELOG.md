@@ -2,6 +2,36 @@
 
 All notable changes to Kemper are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.0.0] - 2026-11-25
+
+Keypacks: shareable sets of shortcuts.
+
+### Added
+- **Keypacks** (`.kmppck` files): a set of shortcuts with a name stored inside the file, so the file name can differ.
+- **Importing:** double-click a keypack, use **Keypacks → Import a keypack…**, or run `--keypack FILE`. Kemper shows every shortcut in it before you decide:
+  - Red: clashes with your shortcuts, your quick picker, or the keypack itself.
+  - Orange: takes over common keys like Ctrl + C.
+  - Gray: already in your Kemper, so it's skipped.
+
+  Conflicts don't block the import, only saving, until you fix them.
+- **Keypack Editor**, opened from **Keypacks → Create a keypack** with **New keypack** or **Edit a keypack file…**:
+  - Import from your Kemper through a gallery with Select all / Deselect all.
+  - Add, Remove, and Undo / Redo for the last 50 changes, with Ctrl + Z, Ctrl + Y, Ctrl + N, Delete and Ctrl + S.
+  - Export with a keypack name, file name and folder. It asks before replacing a file, and asks before closing with changes you haven't exported.
+- **Keypacks made by AI:**
+  - **✦ AI** in the Keypack Editor, or **Create a keypack → Make one with AI…**, gives you instructions to copy into any AI chat.
+  - You describe the shortcuts you want, then paste the AI's answer back. Chat text around the JSON is ignored.
+  - The instructions are also in `docs/AI_INSTRUCTIONS.md` and printed by `--ai-instructions`.
+- Keypacks use a readable form, `{"keys": "Ctrl+Alt+E", "text": "€"}`, that people and AI can write by hand. Kemper writes it too, falling back to the exact form only for keys without a readable name.
+- Kemper links the `.kmppck` file type to itself, with its icon, for the current user (no admin), and fixes the link if Kemper moves. `--doctor` checks it, and `--uninstall` removes it.
+- A running Kemper now accepts a keypack handed over by a second launch and comes to the front to ask about it.
+
+### Changed
+- Keypack files are treated as untrusted:
+  - They're capped at 1 MB and 1,000 shortcuts.
+  - Every shortcut is validated.
+  - A shortcut's text is limited to 10,000 characters, here and in your own settings.
+
 ## [2.0.0] - 2026-11-25
 
 First public release. Kemper is rebuilt around a new window, a full command line and the quick picker.
@@ -34,5 +64,6 @@ First public release. Kemper is rebuilt around a new window, a full command line
 
 - First version: map key combos to text in a tkinter window, with conflicts marked in red and start with Windows.
 
+[3.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.0.0
 [2.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Shashwat-Gupta57/Kemper/commit/89c2d7b

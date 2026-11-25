@@ -22,6 +22,8 @@ Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Pre
 - **Set a combo like in a game.** Click the key box, press the keys, and you're done.
 - **Any text.** One character, an emoji, a symbol, or a whole phrase.
 - **Quick picker.** One combo pops up all your shortcuts by the mouse. Search, pick, and Kemper types it.
+- **Keypacks.** Share sets of shortcuts as `.kmppck` files. Double-click one to preview it and import it.
+- **Made by AI.** Describe the shortcuts you want to any AI chat, paste its answer into Kemper, done.
 - **Catches clashes.** If two shortcuts use the same keys, both turn red and Kemper won't save until you fix them.
 - **Light and dark mode.** Follows Windows, or pick one yourself.
 - **Starts with Windows** if you want, and runs quietly in the background. Closing the window doesn't stop it.
@@ -77,6 +79,55 @@ Press **Ctrl + Alt + K** in any app. A small panel opens by your mouse with ever
 
 Change its combo, or turn it off, in the **Quick Picker** section of the window.
 
+### Keypacks
+
+A keypack is a set of shortcuts in one `.kmppck` file, ready to share: Greek letters, math symbols, your team's phrases.
+
+**Importing.** Double-click a `.kmppck` file. Kemper opens and shows everything in it before you decide:
+- **Red:** clashes with your own shortcuts, or with itself.
+- **Orange:** shortcuts that would take over keys you use a lot, like Ctrl + C.
+- **Gray:** shortcuts you already have, which are skipped.
+
+You can import even with conflicts. The red ones land in your list, and Kemper won't save until you change them. You can also pick a file with **Keypacks → Import a keypack…** in the window.
+
+<img src="docs/images/keypack-import.png" alt="The import question for a keypack called Greek letters: seven shortcuts, Alt + 2 marked red because it clashes with an existing shortcut, Ctrl + P marked orange, and Alt + 0 marked as already in Kemper" width="380">
+
+**Making one.** Click **Keypacks → Create a keypack** at the bottom of the window, then **New keypack** (or **Edit a keypack file…**). The Keypack Editor opens:
+- **Import** (top left) shows your Kemper shortcuts as a gallery. Pick some, or **Select all**, then deselect any you don't want.
+- **Add** makes a new shortcut, and **Remove** deletes the selected one.
+- **Undo** and **Redo** go back and forth through your last 50 changes (Ctrl + Z, Ctrl + Y).
+- **Export** asks for the keypack's name, a file name and a folder. The name is stored inside the file, so the two can differ.
+
+| Picking shortcuts from Kemper | Exporting |
+|---|---|
+| <img src="docs/images/keypack-gallery.png" alt="The Keypack Editor's import gallery with six of seven shortcuts selected" width="420"> | <img src="docs/images/keypack-export.png" alt="The export dialog with fields for keypack name, file name and folder" width="420"> |
+
+### Make keypacks with AI
+
+Let ChatGPT, Claude, Gemini or any other AI chat write the keypack:
+
+1. In the Keypack Editor, click **✦ AI**, then **Copy instructions**. Or use **Create a keypack → Make one with AI…**, or copy them from [docs/AI_INSTRUCTIONS.md](docs/AI_INSTRUCTIONS.md).
+2. Paste them into a new AI chat and say what you want: *"Greek letters for math, capitals on Shift"*, *"my email signature on Ctrl+Alt+S"*, *"arrows on Ctrl+Alt + arrow keys"*.
+3. Paste the AI's whole answer into step 3 and click **Add to keypack**.
+
+The shortcuts appear in the editor. Check them, then export the keypack or import it into your Kemper. Kemper validates everything the AI wrote and marks any clashes.
+
+<img src="docs/images/keypack-ai.png" alt="The Make a keypack with AI dialog: 1. copy the instructions, 2. tell the AI what you want, 3. paste its answer" width="460">
+
+Keypacks are plain JSON, so you can also write one by hand:
+
+```json
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Arrows",
+  "mappings": [
+    { "keys": "Ctrl+Alt+Left", "text": "←" },
+    { "keys": "Ctrl+Alt+Right", "text": "→" }
+  ]
+}
+```
+
 ### Running in the background
 
 Closing the window only hides it; your shortcuts keep working. Open `kemper.pyw` again to bring the window back.
@@ -113,7 +164,7 @@ Run Kemper with no window at all. Every shortcut you use is logged as it happens
 
 ```console
 > python kemper.pyw --cli
-Kemper 2.0.0 is running in this terminal (no window).
+Kemper 3.0.0 is running in this terminal (no window).
   2 shortcut(s) active. Each one shows up here when you use it.
   Press Ctrl+C to stop.
 
@@ -125,7 +176,7 @@ Something not working? `--doctor` checks everything and tells you how to fix eac
 
 ```console
 > python kemper.pyw --doctor
-Kemper 2.0.0 doctor
+Kemper 3.0.0 doctor
 
   ✓  Python 3.12.10
   ✓  pywebview 6.2.1 is installed (needed for the window)
@@ -152,6 +203,8 @@ All commands:
 | `--activate` / `--deactivate` | Turn all shortcuts on or off |
 | `--autostart on` / `off` | Start Kemper when you sign in to Windows, or stop doing so |
 | `--desktop on` / `off` | Add or remove the desktop shortcut with Kemper's icon |
+| `--keypack FILE` | Open a keypack and ask whether to import it, like double-clicking it |
+| `--ai-instructions` | Print the instructions that let an AI chat write keypacks |
 | `--status` | Is Kemper running? Where are its files? |
 | `--doctor` | Find problems and say how to fix them |
 | `--show` | Open the window of the running Kemper |
@@ -178,13 +231,13 @@ python kemper.pyw --uninstall
 
 This asks you to confirm, then:
 - stops Kemper
-- removes it from Windows startup and the desktop
+- removes it from Windows startup and the desktop, and unlinks `.kmppck` files
 - deletes your shortcuts and settings
 - deletes `kemper.pyw` itself It changes nothing else on your PC. Add `--yes` to skip the question.
 
 ## Documentation
 
-The [full documentation](docs/DOCUMENTATION.md) covers every command, the combo syntax, the quick picker, the settings file, how Kemper works inside, troubleshooting and limits.
+The [full documentation](docs/DOCUMENTATION.md) covers every command, the combo syntax, the quick picker, keypacks and their file format, the settings file, how Kemper works inside, troubleshooting and limits.
 
 ## Contributing
 
