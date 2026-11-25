@@ -1,9 +1,14 @@
-"""Kemper: map key combos (e.g. Alt+2) to characters or strings that get typed anywhere."""
-import ctypes, json, os, socket, sys, threading, time, winreg
+"""Kemper (Key Mapper): press a key combo (e.g. Alt+2), get a character or text (e.g. ²) typed anywhere in Windows.
+
+One file. Run it to open the window, or see every command with:  python kemper.pyw --help
+https://github.com/Shashwat-Gupta57/Kemper  ·  MIT License
+"""
+import argparse, ctypes, json, os, re, shutil, socket, subprocess, sys, threading, time, winreg
 
 from ctypes import wintypes
 
 APP = "Kemper"
+VERSION = "1.0.0"
 CONFIG = os.path.join(os.environ.get("APPDATA", "."), APP, "mappings.json")
 PORT = 47321  # single-instance socket; a second launch just tells the first to show its window
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -106,7 +111,8 @@ def load():
         data = {}
     if isinstance(data, list):  # v1 config was a bare list
         data = {"mappings": data}
-    return {"mappings": data.get("mappings", []), "appearance": data.get("appearance", "system")}
+    return {"mappings": data.get("mappings", []), "appearance": data.get("appearance", "system"),
+            "active": data.get("active", True)}
 
 def save(cfg):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
@@ -115,23 +121,28 @@ def save(cfg):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG)  # atomic, so a crash can't leave a half-written config
 
+def hotkey_flags(m):
+    return MOD_NOREPEAT | sum(f for n, _, f in MODS if n in m["mods"])
+
 class Listener(threading.Thread):
     """Owns the global hotkeys. RegisterHotKey ties them to this thread's message queue."""
-    def __init__(self, rows):
+    def __init__(self, rows, on_fire=None):
         super().__init__(daemon=True)
-        self.rows, self.failed, self.ready = rows, [], threading.Event()
+        self.rows, self.on_fire, self.failed, self.ready = rows, on_fire, [], threading.Event()
 
     def run(self):
         self.tid = kernel32.GetCurrentThreadId()
         for i, m in enumerate(self.rows):
-            flags = MOD_NOREPEAT | sum(f for n, _, f in MODS if n in m["mods"])
-            if not user32.RegisterHotKey(None, i + 1, flags, m["vk"]):
+            if not user32.RegisterHotKey(None, i + 1, hotkey_flags(m), m["vk"]):
                 self.failed.append(combo_label(m))
         self.ready.set()
         msg = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == WM_HOTKEY and 0 < msg.wParam <= len(self.rows):
-                type_text(self.rows[msg.wParam - 1]["text"])
+                m = self.rows[msg.wParam - 1]
+                type_text(m["text"])
+                if self.on_fire:
+                    self.on_fire(m)
         for i in range(len(self.rows)):
             user32.UnregisterHotKey(None, i + 1)
 
@@ -140,16 +151,21 @@ class Listener(threading.Thread):
         self.join(2)
 
 # ---------- start with Windows ----------
-def startup_cmd():
-    exe = sys.executable.replace("python.exe", "pythonw.exe")
-    return f'"{exe}" "{os.path.abspath(__file__)}" --hidden'
+def pythonw():
+    return sys.executable.replace("python.exe", "pythonw.exe")
 
-def startup_enabled():
+def startup_cmd():
+    return f'"{pythonw()}" "{os.path.abspath(__file__)}" --hidden'
+
+def startup_value():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            return winreg.QueryValueEx(k, APP)[0] == startup_cmd()
+            return winreg.QueryValueEx(k, APP)[0]
     except OSError:
-        return False
+        return None
+
+def startup_enabled():
+    return startup_value() == startup_cmd()
 
 def set_startup(on):
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
@@ -161,7 +177,7 @@ def set_startup(on):
             except FileNotFoundError:
                 pass
 
-# ---------- UI bridge (the page lives in ui.html) ----------
+# ---------- window helpers ----------
 def os_is_dark():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
@@ -187,22 +203,25 @@ def dark_title_bar(dark):
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4)  # DWMWA_USE_IMMERSIVE_DARK_MODE
         user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x27)  # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER: repaint the title bar
 
+# ---------- engine, shared by the window and --cli ----------
 class Api:
     """Methods here are callable from JS as window.pywebview.api.<name>. Underscored attrs stay private."""
-    def __init__(self):
+    def __init__(self, on_fire=None, on_reload=None):
         self._cfg = load()
         self._listener = None
         self._lock = threading.Lock()
         self._window = None
         self._quitting = False
         self._notice = ""
+        self._on_fire, self._on_reload = on_fire, on_reload
+        self._done = threading.Event()
         self._start()
 
     def _start(self):
         with self._lock:
-            if self._listener:
+            if self._listener or not self._cfg["active"]:
                 return
-            self._listener = Listener([dict(m) for m in self._cfg["mappings"]])
+            self._listener = Listener([dict(m) for m in self._cfg["mappings"]], self._on_fire)
             self._listener.start()
             self._listener.ready.wait(2)
             failed = self._listener.failed
@@ -213,6 +232,16 @@ class Api:
             if self._listener:
                 self._listener.stop()
                 self._listener = None
+
+    def _reload(self):
+        # shortcut: a CLI edit replaces unsaved edits in the open window; merge them if that ever bites.
+        self._cfg = load()
+        self._stop()
+        self._start()
+        if self._window:
+            self._window.evaluate_js("refresh()")
+        if self._on_reload:
+            self._on_reload()
 
     def state(self):
         return {**self._cfg, "startup": startup_enabled(), "notice": self._notice}
@@ -248,9 +277,21 @@ class Api:
             save(self._cfg)
         dark_title_bar(bool(dark))
 
+    def set_active(self, on):
+        """Deactivate turns every shortcut off without closing Kemper; the choice survives restarts."""
+        self._cfg["active"] = bool(on)
+        save(self._cfg)
+        self._stop()
+        self._start()
+        return self.state()
+
     def quit(self):
         self._quitting = True
-        self._window.destroy()
+        self._stop()
+        self._done.set()
+        if self._window:
+            threading.Timer(2, os._exit, (0,)).start()  # backstop: Quit must always end the process
+            self._window.destroy()
 
     def _on_closing(self):
         if self._quitting:
@@ -258,39 +299,719 @@ class Api:
         self._window.hide()  # closing only hides; hotkeys keep working
         return False
 
-def main():
+# ---------- single instance: the running Kemper listens on a local port for commands ----------
+def claim_instance():
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     try:
         srv.bind(("127.0.0.1", PORT))
-    except OSError:  # already running: bring that window up instead
+    except OSError:
+        srv.close()
+        return None
+    srv.listen()
+    return srv
+
+def serve(srv, api):
+    def loop():
+        while True:
+            conn = srv.accept()[0]
+            with conn:
+                conn.settimeout(1)
+                try:
+                    cmd = conn.recv(16)
+                except OSError:
+                    cmd = b""
+            if cmd == b"quit":
+                api.quit()
+            elif cmd == b"reload":
+                api._reload()
+            elif cmd in (b"show", b"") and api._window:
+                api._window.show()
+                api._window.restore()
+            # b"ping" and anything else: the connection itself was the answer
+    threading.Thread(target=loop, daemon=True).start()
+
+def send_command(cmd):
+    """Talk to the running Kemper. Returns False if it isn't running."""
+    try:
+        with socket.create_connection(("127.0.0.1", PORT), timeout=2) as s:
+            s.sendall(cmd)
+        return True
+    except OSError:
+        return False
+
+# ---------- combos typed as text, e.g. "Alt+Shift+2" ----------
+MOD_ALIASES = {"ctrl": "Ctrl", "control": "Ctrl", "alt": "Alt", "shift": "Shift",
+               "win": "Win", "windows": "Win", "meta": "Win", "super": "Win"}
+NAMED_KEYS = {"space": 0x20, "enter": 0x0D, "return": 0x0D, "tab": 0x09, "esc": 0x1B, "escape": 0x1B,
+              "backspace": 0x08, "delete": 0x2E, "del": 0x2E, "insert": 0x2D, "ins": 0x2D, "home": 0x24,
+              "end": 0x23, "pageup": 0x21, "pgup": 0x21, "pagedown": 0x22, "pgdn": 0x22,
+              "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28}
+user32.VkKeyScanW.argtypes = (wintypes.WCHAR,)  # without this ctypes passes a pointer, not the char
+user32.VkKeyScanW.restype = ctypes.c_short
+
+def parse_combo(text):
+    """'Alt+Shift+2' -> {"mods": ["Alt", "Shift"], "vk": 50, "key": "2"}. Raises ValueError with a readable message."""
+    s = text.strip()
+    parts = s[:-2].split("+") + ["+"] if s.endswith("++") else s.split("+")
+    *mod_parts, key = [p.strip() for p in parts]
+    if not key:
+        raise ValueError(f"'{text}' is missing the key after the last +.")
+    mods = []
+    for p in mod_parts:
+        m = MOD_ALIASES.get(p.lower())
+        if not m:
+            raise ValueError(f"Unknown modifier '{p}'. Use Ctrl, Alt, Shift or Win.")
+        if m not in mods:
+            mods.append(m)
+    k = key.lower()
+    if k in NAMED_KEYS:
+        vk = NAMED_KEYS[k]
+    elif re.fullmatch(r"f([1-9]|1\d|2[0-4])", k):
+        vk = 0x6F + int(k[1:])
+    elif re.fullmatch(r"num[0-9]", k):
+        vk = 0x60 + int(k[3:])
+    elif len(key) == 1 and key.isascii() and key.isalnum():
+        vk = ord(key.upper())
+    elif len(key) == 1 and (r := user32.VkKeyScanW(key)) != -1:
+        vk = r & 0xFF
+        if r >> 8:  # the character itself needs Shift/Ctrl/Alt on this keyboard layout
+            raise ValueError(f"'{key}' isn't a key of its own on your keyboard. Write the key it's on, e.g. Shift+{key_name(vk)}.")
+    else:
+        raise ValueError(f"Unknown key '{key}'. Run --help to see the key names.")
+    order = [n for n, _, _ in MODS]
+    return {"mods": sorted(mods, key=order.index), "vk": vk, "key": key_name(vk)}
+
+# ---------- CLI ----------
+EXAMPLES = """\
+combos:
+  Join keys with +, e.g. Alt+2, Ctrl+Alt+E, Ctrl+Shift+Right.
+  Modifiers: Ctrl, Alt, Shift, Win.
+  Keys: A-Z, 0-9, F1-F24, Num0-Num9, Space, Enter, Tab, Esc, Backspace, Delete,
+        Insert, Home, End, PageUp, PageDown, Left, Right, Up, Down,
+        and punctuation keys like - = [ ] ; ' , . / `
+
+examples:
+  python kemper.pyw                           open the window
+  python kemper.pyw --cli                     run in this terminal, no window
+  python kemper.pyw --add "Alt+2" "²"         Alt+2 types ²
+  python kemper.pyw --add "Alt+Shift+2" "₂"   Alt+Shift+2 types ₂
+  python kemper.pyw --remove "Alt+2"
+  python kemper.pyw --keys
+  python kemper.pyw --doctor
+"""
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="python kemper.pyw", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EXAMPLES,
+        description="Kemper (Key Mapper): press a key combo, get a character or text typed, anywhere in Windows.\n"
+                    "With no options, Kemper opens its window.")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--cli", action="store_true", help="run in this terminal with no window; logs every shortcut you use (Ctrl+C stops)")
+    g.add_argument("--keys", action="store_true", help="list your shortcuts")
+    g.add_argument("--add", nargs=2, metavar=("COMBO", "TEXT"), help='add a shortcut, e.g. --add "Alt+2" "²"')
+    g.add_argument("--remove", metavar="COMBO", help='remove a shortcut, e.g. --remove "Alt+2"')
+    g.add_argument("--activate", action="store_true", help="turn shortcuts on")
+    g.add_argument("--deactivate", action="store_true", help="turn every shortcut off without quitting Kemper")
+    g.add_argument("--status", action="store_true", help="show whether Kemper is running and how it is set up")
+    g.add_argument("--doctor", action="store_true", help="check for problems and say how to fix each one")
+    g.add_argument("--show", action="store_true", help="open the window (starts Kemper if it isn't running)")
+    g.add_argument("--quit", action="store_true", help="stop the running Kemper, window or --cli")
+    g.add_argument("--install", action="store_true", help="start Kemper with Windows, and start it now")
+    g.add_argument("--uninstall", action="store_true",
+                   help="remove Kemper from this PC: stop it, remove it from startup, delete your settings and this file")
+    g.add_argument("--hidden", action="store_true", help="open with the window hidden (used when Windows starts)")
+    p.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation (for --uninstall)")
+    p.add_argument("-v", "--version", action="version", version=f"Kemper {VERSION}")
+    return p
+
+def fail(msg):
+    print(f"kemper: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+def one_line(text):
+    return text.replace("\r\n", "\n").replace("\n", "⏎")
+
+def change_config(change):
+    """Load, edit, validate and save the settings, then tell a running Kemper to reload them."""
+    cfg = load()
+    change(cfg)
+    try:
+        cfg["mappings"] = clean_mappings(cfg["mappings"])
+    except ValueError as e:
+        fail(f"{e} Nothing was saved. Run --doctor for details.")
+    save(cfg)
+    if send_command(b"reload"):
+        print("The running Kemper picked up the change.")
+
+def cmd_keys():
+    cfg = load()
+    maps = cfg["mappings"]
+    if not maps:
+        print('No shortcuts yet. Add one with:  python kemper.pyw --add "Alt+2" "²"')
+        return
+    dup = find_conflicts(maps)
+    width = max(len(combo_label(m)) for m in maps)
+    for m in maps:
+        flag = "   ✗ same keys as another shortcut" if combo_id(m) in dup else ""
+        print(f"  {combo_label(m):<{width}}  →  {one_line(m['text'])}{flag}")
+    print(f"\n{len(maps)} shortcut(s), {'active' if cfg['active'] else 'deactivated'}.")
+
+def cmd_add(combo, text):
+    try:
+        m = parse_combo(combo)
+    except ValueError as e:
+        fail(e)
+    if not text:
+        fail("The text can't be empty.")
+    m["text"] = text
+
+    def change(cfg):
+        for old in cfg["mappings"]:
+            if combo_id(old) == combo_id(m):
+                fail(f"{combo_label(m)} already types {one_line(old['text'])}. "
+                     f'Remove it first:  python kemper.pyw --remove "{combo}"')
+        cfg["mappings"].append(m)
+    change_config(change)
+    print(f"Added {combo_label(m)}  →  {one_line(text)}")
+
+def cmd_remove(combo):
+    try:
+        target = combo_id(parse_combo(combo))
+    except ValueError as e:
+        fail(e)
+
+    def change(cfg):
+        keep = [m for m in cfg["mappings"] if combo_id(m) != target]
+        if len(keep) == len(cfg["mappings"]):
+            fail(f"No shortcut uses {combo}. See them with:  python kemper.pyw --keys")
+        cfg["mappings"] = keep
+    change_config(change)
+    print(f"Removed {combo}.")
+
+def cmd_set_active(on):
+    change_config(lambda cfg: cfg.update(active=on))
+    print("Shortcuts are on." if on else "Shortcuts are off. Turn them back on with:  python kemper.pyw --activate")
+
+def cmd_status():
+    cfg = load()
+    running = send_command(b"ping")
+    print(f"Kemper {VERSION}")
+    print(f"  Running:             {'yes' if running else 'no'}")
+    print(f"  Shortcuts:           {len(cfg['mappings'])} ({'active' if cfg['active'] else 'deactivated'})")
+    print(f"  Start with Windows:  {'on' if startup_enabled() else 'off'}")
+    print(f"  Settings file:       {CONFIG}")
+    print(f"  Program file:        {os.path.abspath(__file__)}")
+
+def webview2_version():
+    guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    for root, path in ((winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}"),
+                       (winreg.HKEY_CURRENT_USER, rf"Software\Microsoft\EdgeUpdate\Clients\{guid}")):
         try:
-            socket.create_connection(("127.0.0.1", PORT), timeout=2).close()
+            with winreg.OpenKey(root, path) as k:
+                v = winreg.QueryValueEx(k, "pv")[0]
+                if v and v != "0.0.0.0":
+                    return v
         except OSError:
             pass
-        return
-    srv.listen()
 
-    import webview  # imported late so the tests and the second-instance path stay fast
+def hotkey_free(m):
+    hid = 0xBFFF
+    if user32.RegisterHotKey(None, hid, hotkey_flags(m), m["vk"]):
+        user32.UnregisterHotKey(None, hid)
+        return True
+    return False
+
+def cmd_doctor():
+    levels = []
+
+    def check(level, msg):  # 0 ok, 1 warning, 2 problem
+        levels.append(level)
+        print(f"  {'✓!✗'[level]}  {msg}")
+
+    print(f"Kemper {VERSION} doctor\n")
+    v = sys.version_info
+    check(0 if v >= (3, 10) else 2, f"Python {v.major}.{v.minor}.{v.micro}" + ("" if v >= (3, 10) else " (Kemper needs 3.10 or newer)"))
+    try:
+        import importlib.metadata
+        check(0, f"pywebview {importlib.metadata.version('pywebview')} is installed (needed for the window)")
+    except importlib.metadata.PackageNotFoundError:
+        check(1, "pywebview isn't installed, so only --cli works. Fix:  python -m pip install pywebview")
+    wv2 = webview2_version()
+    check(0 if wv2 else 1, f"Edge WebView2 {wv2} (draws the window)" if wv2 else
+          "Edge WebView2 not found, so the window may not open. Get it from https://go.microsoft.com/fwlink/p/?LinkId=2124703")
+
+    cfg = load()
+    if not os.path.exists(CONFIG):
+        check(0, "No settings file yet. It's created the first time you save.")
+    else:
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                json.load(f)
+            clean_mappings(cfg["mappings"])
+            check(0, f"{len(cfg['mappings'])} shortcut(s) saved in {CONFIG}")
+        except ValueError as e:
+            check(2, f"Settings file has a problem: {e} ({CONFIG})")
+        check(0 if cfg["active"] else 1, "Shortcuts are active" if cfg["active"] else
+              "Kemper is deactivated, so shortcuts do nothing. Fix:  python kemper.pyw --activate")
+
+    running = send_command(b"ping")
+    check(0 if running else 1, "Kemper is running" if running else
+          "Kemper isn't running, so shortcuts do nothing. Start it:  pythonw kemper.pyw  (or --cli)")
+
+    sv = startup_value()
+    if sv is None:
+        check(1, "Kemper doesn't start with Windows. Fix:  python kemper.pyw --install")
+    elif sv == startup_cmd():
+        check(0, "Starts with Windows")
+    else:
+        check(2, "The Windows startup entry points to a different place (was Kemper moved?). Fix:  python kemper.pyw --install")
+
+    if running:
+        check(0, "Skipped the hotkey check because the running Kemper is holding them")
+    else:
+        taken = [combo_label(m) for m in cfg["mappings"] if not hotkey_free(m)]
+        check(2 if taken else 0, ("Already used by another app: " + ", ".join(taken) + ". Pick different keys for these.")
+              if taken else "No other app is using your combos")
+
+    print("\nAll good." if max(levels) == 0 else "\nDone. See the ! and ✗ lines above.")
+    if 2 in levels:
+        sys.exit(1)
+
+def run_cli():
+    srv = claim_instance()
+    if not srv:
+        fail("Kemper is already running. Stop it first with:  python kemper.pyw --quit")
+
+    def fired(m):
+        print(f"  {time.strftime('%H:%M:%S')}  {combo_label(m)}  →  {one_line(m['text'])}", flush=True)
+
+    def reloaded():
+        n, on = len(api._cfg["mappings"]), api._cfg["active"]
+        print(f"  Settings changed: {n} shortcut(s), {'active' if on else 'deactivated'}.", flush=True)
+
+    api = Api(on_fire=fired, on_reload=reloaded)
+    serve(srv, api)
+    cfg = api._cfg
+    print(f"Kemper {VERSION} is running in this terminal (no window).")
+    if cfg["active"]:
+        print(f"  {len(cfg['mappings'])} shortcut(s) active. Each one shows up here when you use it.")
+    else:
+        print("  Kemper is deactivated, so shortcuts do nothing. Turn them on with:  python kemper.pyw --activate")
+    if api._notice:
+        print("  " + api._notice)
+    print("  Press Ctrl+C to stop.\n", flush=True)
+    try:
+        while not api._done.wait(0.5):  # short waits keep Ctrl+C responsive
+            pass
+    except KeyboardInterrupt:
+        pass
+    api._stop()
+    print("Kemper stopped.")
+
+def start_gui_process():
+    subprocess.Popen([pythonw(), os.path.abspath(__file__)], close_fds=True)
+
+def cmd_show():
+    if send_command(b"show"):
+        return
+    start_gui_process()
+    print("Started Kemper.")
+
+def cmd_quit():
+    print("Kemper stopped." if send_command(b"quit") else "Kemper isn't running.")
+
+def cmd_install():
+    set_startup(True)
+    print("Kemper will start with Windows.")
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        print("pywebview isn't installed, so the window can't open yet. Fix:  python -m pip install pywebview")
+        return
+    if send_command(b"ping"):
+        print("It's already running.")
+    else:
+        start_gui_process()
+        print("Started Kemper.")
+
+def cmd_uninstall(yes):
+    me = os.path.abspath(__file__)
+    if not yes:
+        print("This stops Kemper, removes it from Windows startup, deletes your shortcuts and settings, and deletes")
+        print(f"  {me}")
+        try:
+            answer = input("Uninstall Kemper? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Cancelled. Nothing was changed.")
+            return
+    if send_command(b"quit"):
+        for _ in range(30):  # wait for it to exit so it can't rewrite the settings after we delete them
+            if not send_command(b"ping"):
+                break
+            time.sleep(0.2)
+        print("Stopped the running Kemper.")
+    set_startup(False)
+    print("Removed Kemper from Windows startup.")
+    folder = os.path.dirname(CONFIG)
+    if os.path.isdir(folder):
+        shutil.rmtree(folder)
+        print(f"Deleted your shortcuts and settings ({folder}).")
+    os.remove(me)
+    print(f"Deleted {me}.\nKemper is uninstalled.")
+
+def run_gui(hidden):
+    srv = claim_instance()
+    if not srv:  # already running: bring that window up instead
+        send_command(b"show")
+        return
+    import webview  # imported here so the CLI works without it
     api = Api()
+    serve(srv, api)
     cfg = api._cfg
     dark = cfg["appearance"] == "dark" or (cfg["appearance"] == "system" and os_is_dark())
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html"), encoding="utf-8") as f:
-        html = f.read()
-    win = webview.create_window(APP, html=html, js_api=api, width=540, height=680, min_size=(440, 480),
-                                hidden="--hidden" in sys.argv, background_color="#000000" if dark else "#F2F2F7",
-                                text_select=True)
+    win = webview.create_window(APP, html=UI_HTML, js_api=api, width=540, height=680, min_size=(440, 480),
+                                hidden=hidden, background_color="#000000" if dark else "#F2F2F7", text_select=True)
     api._window = win
     win.events.closing += api._on_closing
     win.events.shown += lambda: dark_title_bar(dark)
-
-    def serve():
-        while True:
-            srv.accept()[0].close()
-            win.show()
-            win.restore()
-    threading.Thread(target=serve, daemon=True).start()
     webview.start()
+
+def main():
+    for stream in (sys.stdout, sys.stderr):
+        if stream:  # None under pythonw
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    a = build_parser().parse_args()
+    if a.cli:
+        run_cli()
+    elif a.keys:
+        cmd_keys()
+    elif a.add:
+        cmd_add(*a.add)
+    elif a.remove:
+        cmd_remove(a.remove)
+    elif a.activate or a.deactivate:
+        cmd_set_active(a.activate)
+    elif a.status:
+        cmd_status()
+    elif a.doctor:
+        cmd_doctor()
+    elif a.show:
+        cmd_show()
+    elif a.quit:
+        cmd_quit()
+    elif a.install:
+        cmd_install()
+    elif a.uninstall:
+        cmd_uninstall(a.yes)
+    else:
+        run_gui(a.hidden)
+
+# ---------- the window's page (HTML/CSS/JS), kept here so Kemper stays a single file ----------
+UI_HTML = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kemper</title>
+<style>
+  :root {
+    --bg: #F2F2F7; --card: #FFFFFF; --sep: rgba(60,60,67,.18); --text: #1C1C1E; --sub: #8E8E93;
+    --blue: #007AFF; --red: #FF3B30; --orange: #FF9500; --orange-bg: rgba(255,149,0,.12); --green-bg: rgba(52,199,89,.14); --red-bg: rgba(255,59,48,.10); --green: #34C759;
+    --pill: #EEEEF3; --pill-text: #1C1C1E; --off: #E9E9EA; --seg: rgba(118,118,128,.12); --seg-on: #FFFFFF;
+    --bar: rgba(242,242,247,.82); --shadow: 0 1px 2px rgba(0,0,0,.04);
+    color-scheme: light;
+  }
+  :root.dark {
+    --bg: #000000; --card: #1C1C1E; --sep: rgba(84,84,88,.6); --text: #FFFFFF; --sub: #8E8E93;
+    --blue: #0A84FF; --red: #FF453A; --orange: #FF9F0A; --orange-bg: rgba(255,159,10,.16); --green-bg: rgba(48,209,88,.16); --red-bg: rgba(255,69,58,.16); --green: #30D158;
+    --pill: #2C2C2E; --pill-text: #FFFFFF; --off: #39393D; --seg: rgba(118,118,128,.24); --seg-on: #636366;
+    --bar: rgba(0,0,0,.78); --shadow: none;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  button, input { font-family: inherit; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: background-color .25s ease, color .25s ease;
+  }
+  main { flex: 1; overflow-y: auto; padding: 22px 20px 24px; scrollbar-gutter: stable; }
+  main::-webkit-scrollbar { width: 10px; }
+  main::-webkit-scrollbar-thumb { background: var(--sep); border-radius: 10px; border: 3px solid var(--bg); }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4px 18px; }
+  h1 { font: 700 32px/1.1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; margin: 0; letter-spacing: -.5px; }
+  .link { background: none; border: 0; padding: 4px 6px; font: inherit; color: var(--red); cursor: pointer; border-radius: 8px; }
+  .link:hover { background: var(--red-bg); }
+  .actions { display: flex; gap: 4px; }
+  #toggle { color: var(--orange); }
+  #toggle:hover { background: var(--orange-bg); }
+  #toggle.go { color: var(--green); }
+  #toggle.go:hover { background: var(--green-bg); }
+  #list { transition: opacity .25s ease; }
+  body.off #list { opacity: .5; }
+
+  .section-title { font-size: 12.5px; letter-spacing: .3px; text-transform: uppercase; color: var(--sub); margin: 22px 16px 7px; }
+  .section-foot { font-size: 12.5px; color: var(--sub); margin: 7px 16px 0; }
+  .card { background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); transition: background-color .25s ease; }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 8px 14px 8px 16px; position: relative; transition: background-color .2s ease; }
+  .row + .row::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); transform: scaleY(.5); transform-origin: top; }
+  .row .label { flex: 1; min-width: 0; }
+
+  /* iOS switch */
+  .switch { position: relative; width: 51px; height: 31px; flex: none; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; border-radius: 31px; background: var(--off); transition: background-color .25s ease; }
+  .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.16); transition: transform .25s cubic-bezier(.3,.7,.4,1); }
+  .switch input:checked + span { background: var(--green); }
+  .switch input:checked + span::after { transform: translateX(20px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  /* segmented control */
+  .seg { display: flex; background: var(--seg); border-radius: 9px; padding: 2px; flex: none; }
+  .seg button { border: 0; background: none; color: var(--text); font-size: 13px; font-weight: 500; line-height: 1; padding: 7px 12px; border-radius: 7px; cursor: pointer; transition: background-color .2s ease, box-shadow .2s ease; }
+  .seg button.on { background: var(--seg-on); box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+
+  /* shortcut rows */
+  .pill { flex: none; width: 168px; height: 34px; border: 0; border-radius: 9px; background: var(--pill); color: var(--pill-text);
+    font-size: 13px; font-weight: 600; line-height: 34px; padding: 0 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: background-color .2s ease, color .2s ease, transform .1s ease; }
+  .pill:active { transform: scale(.97); }
+  .pill.empty { color: var(--blue); }
+  .pill.recording { background: var(--blue); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+  .pill.bad { background: var(--red); color: #fff; }
+  @keyframes pulse { 50% { opacity: .72; } }
+  .text { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 20px;
+    padding: 6px 0; user-select: text; -webkit-user-select: text; }
+  .text::placeholder { color: var(--sub); }
+  .row.bad { background: var(--red-bg); }
+  .del { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 0; background: var(--red); color: #fff; cursor: pointer;
+    display: grid; place-items: center; opacity: .9; transition: opacity .15s ease, transform .1s ease; }
+  .del:hover { opacity: 1; }
+  .del:active { transform: scale(.9); }
+  .del::before { content: ""; width: 10px; height: 2px; border-radius: 1px; background: #fff; }
+  .add { width: 100%; border: 0; background: none; color: var(--blue); font: inherit; text-align: left; padding: 0 16px; min-height: 50px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px; position: relative; }
+  .add:hover { background: var(--seg); }
+  .card .row + .add::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); transform: scaleY(.5); transform-origin: top; }
+  .add i { width: 22px; height: 22px; border-radius: 50%; background: var(--green); position: relative; flex: none; }
+  .add i::before, .add i::after { content: ""; position: absolute; left: 6px; top: 10px; width: 10px; height: 2px; border-radius: 1px; background: #fff; }
+  .add i::after { transform: rotate(90deg); }
+
+  footer { flex: none; display: flex; align-items: center; gap: 14px; padding: 12px 20px 16px; background: var(--bar);
+    backdrop-filter: saturate(180%) blur(20px); border-top: 1px solid var(--sep); }
+  #status { flex: 1; min-width: 0; font-size: 13px; color: var(--sub); transition: color .2s ease; }
+  #status.err { color: var(--red); }
+  #save { flex: none; border: 0; border-radius: 12px; background: var(--blue); color: #fff; font-size: 15px; font-weight: 600;
+    padding: 11px 30px; cursor: pointer; transition: opacity .2s ease, transform .1s ease, background-color .2s ease; }
+  #save:active:not(:disabled) { transform: scale(.97); }
+  #save:disabled { opacity: .35; cursor: default; }
+  button:focus-visible, .text:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Shortcuts</h1>
+    <div class="actions">
+      <button class="link" id="toggle"></button>
+      <button class="link" id="quit" title="Close Kemper. Shortcuts stop until you open it again.">Quit</button>
+    </div>
+  </header>
+
+  <div class="section-title">General</div>
+  <div class="card">
+    <div class="row">
+      <div class="label">Start with Windows</div>
+      <label class="switch"><input type="checkbox" id="startup" aria-label="Start with Windows"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="label">Appearance</div>
+      <div class="seg" id="appearance" role="group" aria-label="Appearance">
+        <button data-v="system">System</button><button data-v="light">Light</button><button data-v="dark">Dark</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Key → Text</div>
+  <div class="card" id="list"></div>
+  <div class="section-foot" id="hint">Click a key box, then press the combo, like Alt + 2. Paste or type the text it should produce, like ².</div>
+</main>
+<footer>
+  <div id="status"></div>
+  <button id="save" disabled>Save</button>
+</footer>
+
+<script>
+let api, rows = [], saved = "[]", notice = "", recording = null, appearance = "system", active = true;
+const $ = s => document.querySelector(s);
+const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
+const MOD_KEYS = ["Control", "Alt", "Shift", "Meta", "AltGraph", "OS"];
+const media = matchMedia("(prefers-color-scheme: dark)");
+
+const id = r => [...r.mods].sort().join("+") + "|" + r.vk;
+const label = r => [...r.mods].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).concat(r.key).join(" + ");
+const conflicts = () => {
+  const n = {};
+  rows.filter(r => r.vk).forEach(r => n[id(r)] = (n[id(r)] || 0) + 1);
+  return new Set(Object.keys(n).filter(k => n[k] > 1));
+};
+
+function render() {
+  const list = $("#list");
+  list.replaceChildren();
+  rows.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const pill = document.createElement("button");
+    pill.className = "pill";
+    pill.onclick = e => { e.stopPropagation(); recording === null ? startRecording(i) : stopRecording(null); };
+    const text = document.createElement("input");
+    text.className = "text";
+    text.placeholder = "Text to type";
+    text.value = r.text;
+    text.spellcheck = false;
+    text.oninput = () => { r.text = text.value; validate(); };
+    const del = document.createElement("button");
+    del.className = "del";
+    del.title = "Delete shortcut";
+    del.setAttribute("aria-label", "Delete shortcut");
+    del.onclick = () => { if (recording === null) { rows.splice(i, 1); render(); } };
+    row.append(pill, text, del);
+    list.append(row);
+  });
+  const add = document.createElement("button");
+  add.className = "add";
+  add.innerHTML = "<i></i>Add Shortcut";
+  add.onclick = e => {
+    e.stopPropagation(); // the page-level click handler would cancel the recording we start here
+    rows.push({ mods: [], vk: 0, key: "", text: "" });
+    render();
+    startRecording(rows.length - 1);
+    $("main").scrollTo({ top: 1e6, behavior: "smooth" });
+  };
+  list.append(add);
+  validate();
+}
+
+function validate() {
+  const dup = conflicts();
+  [...$("#list").querySelectorAll(".row")].forEach((row, i) => {
+    const r = rows[i], pill = row.querySelector(".pill"), bad = r.vk && dup.has(id(r));
+    row.classList.toggle("bad", !!bad);
+    pill.className = "pill" + (recording === i ? " recording" : bad ? " bad" : r.vk ? "" : " empty");
+    pill.textContent = recording === i ? "Press keys…" : r.vk ? label(r) : "Set keys";
+    pill.title = recording === i ? "Press a key combo · Esc to cancel" : "Click to change";
+  });
+  let msg, ok = false, err = false;
+  if (recording !== null) msg = "Press the combo now. Esc cancels.";
+  else if (dup.size) { msg = "Two or more shortcuts use the same keys. Change the red ones before saving."; err = true; }
+  else if (rows.some(r => !r.vk || !r.text)) msg = "Every shortcut needs both keys and text.";
+  else if (JSON.stringify(rows) === saved && !active) msg = "Kemper is deactivated. Shortcuts won't type anything until you activate it.";
+  else if (JSON.stringify(rows) === saved) { msg = notice || "All changes saved. Shortcuts are active."; err = !!notice; }
+  else { msg = "You have unsaved changes."; ok = true; }
+  $("#status").textContent = msg;
+  $("#status").classList.toggle("err", err);
+  $("#save").disabled = !ok;
+}
+
+// Minecraft-style key capture
+async function startRecording(i) {
+  if (recording !== null) return;
+  document.activeElement?.blur();
+  recording = i;
+  validate();
+  await api.capture(true);
+}
+async function stopRecording(update) {
+  const i = recording;
+  recording = null;
+  if (update) Object.assign(rows[i], update);
+  await api.capture(false);
+  validate();
+}
+document.addEventListener("keydown", async e => {
+  if (recording === null) {
+    if (e.key === "s" && e.ctrlKey && !$("#save").disabled) { e.preventDefault(); $("#save").click(); }
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  if (MOD_KEYS.includes(e.key)) return; // wait for the actual key
+  const mods = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Win");
+  if (e.key === "Escape" && !mods.length) return stopRecording(null);
+  const vk = e.keyCode; // on Windows this is the virtual-key code
+  const i = recording;
+  await stopRecording({ mods, vk, key: await api.key_name(vk) });
+  const input = $("#list").querySelectorAll(".text")[i];
+  if (input && !input.value) input.focus();
+}, true);
+document.addEventListener("click", () => { if (recording !== null) stopRecording(null); });
+window.addEventListener("blur", () => { if (recording !== null) stopRecording(null); });
+
+$("#save").onclick = async () => {
+  const res = await api.save(rows);
+  if (!res.ok) { $("#status").textContent = res.error; $("#status").classList.add("err"); return; }
+  rows = res.mappings;
+  saved = JSON.stringify(rows);
+  notice = res.notice;
+  render();
+};
+$("#startup").onchange = async e => { e.target.checked = await api.set_startup(e.target.checked); };
+$("#quit").onclick = () => api.quit();
+function showActive() {
+  document.body.classList.toggle("off", !active);
+  $("#toggle").textContent = active ? "Deactivate" : "Activate";
+  $("#toggle").classList.toggle("go", !active);
+  $("#toggle").title = active ? "Turn all shortcuts off without closing Kemper" : "Turn shortcuts back on";
+}
+$("#toggle").onclick = async () => {
+  const s = await api.set_active(!active);
+  active = s.active;
+  notice = s.notice;
+  showActive();
+  validate();
+};
+
+function applyTheme(save) {
+  const dark = appearance === "dark" || (appearance === "system" && media.matches);
+  document.documentElement.classList.toggle("dark", dark);
+  document.querySelectorAll("#appearance button").forEach(b => b.classList.toggle("on", b.dataset.v === appearance));
+  api?.set_appearance(save ? appearance : "", dark);
+}
+$("#appearance").onclick = e => { const v = e.target.dataset?.v; if (v) { appearance = v; applyTheme(true); } };
+media.addEventListener("change", () => applyTheme(false));
+
+// Called on start, and by Kemper when the settings change from the command line.
+async function refresh() {
+  recording = null;
+  const s = await api.state();
+  rows = s.mappings;
+  saved = JSON.stringify(rows);
+  notice = s.notice;
+  appearance = s.appearance;
+  $("#startup").checked = s.startup;
+  active = s.active;
+  showActive();
+  applyTheme(false);
+  render();
+}
+window.addEventListener("pywebviewready", () => { api = window.pywebview.api; refresh(); });
+</script>
+</body>
+</html>
+'''
 
 if __name__ == "__main__":
     main()
