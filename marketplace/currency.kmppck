@@ -1,0 +1,36 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Currency symbols",
+  "description": "Currency signs on Ctrl + Alt + a letter from the currency's name.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+E",
+      "text": "€"
+    },
+    {
+      "keys": "Ctrl+Alt+L",
+      "text": "£"
+    },
+    {
+      "keys": "Ctrl+Alt+Y",
+      "text": "¥"
+    },
+    {
+      "keys": "Ctrl+Alt+R",
+      "text": "₹"
+    },
+    {
+      "keys": "Ctrl+Alt+W",
+      "text": "₩"
+    },
+    {
+      "keys": "Ctrl+Alt+B",
+      "text": "₿"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+C",
+      "text": "¢"
+    }
+  ]
+}

@@ -71,7 +71,8 @@ Starting at sign-in points at the exact path of `kemper.pyw` and the Python that
 |---|---|---|---|
 | Shortcuts, typing, quick picker, keypacks, CLI | ✓ | ✓ | ✓ |
 | Start at sign-in | ✓ (Run key) | ✓ (LaunchAgent) | ✓ (autostart entry) |
-| Desktop shortcut with Kemper's icon | ✓ | — | ✓ (desktop and app menu) |
+| Desktop shortcut with Kemper's icon | ✓ | — | ✓ |
+| Found by searching for "Kemper" (Start menu, app menu) | ✓ | — | ✓ |
 | Double-click `.kmppck` to import | ✓ | — (use **Import a keypack…**) | ✓ |
 | Modifier names in the window | Ctrl, Alt, Shift, Win | Ctrl, Option, Shift, Cmd | Ctrl, Alt, Shift, Super |
 
@@ -125,6 +126,10 @@ The picker is part of the window version of Kemper. It isn't available in `--cli
 ## Keypacks
 
 A keypack is a set of shortcuts saved in one `.kmppck` file so it can be shared: by email, in a chat, on a website. Anyone with Kemper can import it.
+
+### The Keypack Marketplace
+
+The [Marketplace](../marketplace) has ready-made keypacks: superscripts and subscripts, Greek letters, math symbols, arrows, currency symbols, typography, emoji and text faces. No two of them share a combo, so you can import all of them. Open it from **Keypacks → Browse the Marketplace** in Kemper's window, or at [kemper.talken.in/#marketplace](https://kemper.talken.in/#marketplace), where you can see every shortcut in each keypack before downloading it. To add your own keypack, see [Adding your keypack](../marketplace#adding-your-keypack).
 
 ### Importing a keypack
 
@@ -205,6 +210,7 @@ A keypack is a UTF-8 JSON file:
 | `format` | Always `"kemper-keypack"` |
 | `version` | `1`. Optional; Kemper assumes 1 |
 | `name` | What people see when importing. Optional; without it, Kemper uses the file name |
+| `description` | One sentence about the keypack. Optional; the Marketplace shows it |
 | `made_with` | Informational only |
 | `mappings` | The shortcuts, in either of two forms |
 
@@ -438,6 +444,14 @@ You can edit the file by hand. Afterwards, restart Kemper, or run any setting co
   | Linux | `~/.config/autostart/kemper.desktop` |
 
 - Only one Kemper runs at a time. A second launch tells the first one to show its window, then exits.
+- The first time the window opens, Kemper adds itself to your Start menu (Windows) or app menu (Linux), with its icon, so searching for *Kemper* finds it. The entry is fixed on every start if you've moved `kemper.pyw`. It lives at:
+
+  | System | Entry |
+  |---|---|
+  | Windows | `Kemper.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs` |
+  | Linux | `~/.local/share/applications/kemper.desktop` |
+
+  macOS's Spotlight and Launchpad only list app bundles, which a single Python file isn't. Start it from Terminal, or turn on **Start at login**.
 
 Why not a *service* (or daemon)? Services run outside your desktop session, where they can't see your keyboard or type into your apps, so a hotkey tool can't be one. Starting at sign-in is the standard way to do it.
 
@@ -449,7 +463,7 @@ python kemper.pyw --uninstall
 
 After you confirm, Kemper:
 1. stops the running Kemper,
-2. removes its startup entry and its desktop shortcut, and unlinks `.kmppck` files,
+2. removes its startup entry, its desktop shortcut and its Start menu or app menu entry, and unlinks `.kmppck` files,
 3. deletes its [settings folder](#settings-file) (your shortcuts, settings and Kemper's icon file),
 4. deletes `kemper.pyw` itself.
 

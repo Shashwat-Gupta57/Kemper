@@ -5,7 +5,7 @@ Runs on Windows, macOS and Linux (X11). One file. Run it to open the window, or 
     python kemper.pyw --help
 https://kemper.talken.in  ·  https://github.com/Shashwat-Gupta57/Kemper  ·  MIT License
 """
-import argparse, base64, ctypes, json, os, plistlib, re, shutil, socket, struct, subprocess, sys, threading, time
+import argparse, base64, ctypes, json, os, plistlib, re, shutil, socket, struct, subprocess, sys, threading, time, webbrowser
 
 IS_WIN, IS_MAC = sys.platform == "win32", sys.platform == "darwin"
 IS_LINUX = not (IS_WIN or IS_MAC)
@@ -15,7 +15,8 @@ if IS_WIN:
     from ctypes import wintypes
 
 APP = "Kemper"
-VERSION = "3.1.1"
+VERSION = "3.2.0"
+MARKETPLACE_URL = "https://kemper.talken.in/#marketplace"
 
 def config_dir():
     """Where settings live: KEMPER_HOME if set (the tests use it), else each system's usual place."""
@@ -171,13 +172,8 @@ if IS_WIN:
     def desktop_enabled():
         return os.path.exists(desktop_path())
 
-    def set_desktop(on):
+    def make_shortcut(lnk):
         """A .pyw file always shows Python's icon, so Kemper's own icon lives on a shortcut to it."""
-        lnk = desktop_path()
-        if not on:
-            if os.path.exists(lnk):
-                os.remove(lnk)
-            return
         me = os.path.abspath(__file__)
         env = {**os.environ, "K_LNK": lnk, "K_EXE": pythonw(), "K_ARGS": f'"{me}"', "K_ICON": icon_path(), "K_DIR": os.path.dirname(me)}
         ps = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:K_LNK); $s.TargetPath = $env:K_EXE; "
@@ -187,6 +183,35 @@ if IS_WIN:
                            capture_output=True, creationflags=0x08000000)  # CREATE_NO_WINDOW
         if r.returncode or not os.path.exists(lnk):
             raise OSError(r.stderr.decode(errors="replace").strip() or "couldn't create the shortcut")
+
+    def set_desktop(on):
+        lnk = desktop_path()
+        if on:
+            make_shortcut(lnk)
+        elif os.path.exists(lnk):
+            os.remove(lnk)
+
+    # Start menu: what makes typing "Kemper" in Start (Windows search) find it
+    def app_menu_path():
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 0x02, None, 0, buf)  # CSIDL_PROGRAMS: this user's Start menu
+        return os.path.join(buf.value, f"{APP}.lnk")
+
+    def app_menu_registered():
+        """True when Kemper is in the Start menu and the entry still points at this file (it may have moved)."""
+        try:
+            with open(app_menu_path(), "rb") as f:
+                return f'"{os.path.abspath(__file__)}"'.encode("utf-16-le") in f.read()  # .lnk keeps its arguments in UTF-16
+        except OSError:
+            return False
+
+    def register_app_menu():
+        if not app_menu_registered():
+            make_shortcut(app_menu_path())
+
+    def unregister_app_menu():
+        if os.path.exists(app_menu_path()):
+            os.remove(app_menu_path())
 
     def keypack_cmd():
         return f'"{pythonw()}" "{os.path.abspath(__file__)}" --keypack "%1"'
@@ -323,7 +348,7 @@ if IS_WIN:
         user32.SetWindowPos(hwnd, -1, x, y, 0, 0, 0x11)  # HWND_TOPMOST, SWP_NOSIZE|SWP_NOACTIVATE
 
 
-    CAN_DESKTOP = CAN_KEYPACK_FILES = True
+    CAN_DESKTOP = CAN_KEYPACK_FILES = CAN_APP_MENU = True
 
     user32.VkKeyScanW.argtypes = (wintypes.WCHAR,)  # without this ctypes passes a pointer, not the char
     user32.VkKeyScanW.restype = ctypes.c_short
@@ -436,6 +461,7 @@ if IS_WIN:
 else:
     CAN_DESKTOP = IS_LINUX  # a Mac desktop icon would need a real, signed app bundle
     CAN_KEYPACK_FILES = IS_LINUX  # macOS only links file types to app bundles; use Import a keypack… there
+    CAN_APP_MENU = IS_LINUX  # likewise Spotlight and Launchpad only list app bundles
     XDG_DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 
     # Kemper stores every key as a Windows virtual-key code, on every system, so settings and keypacks move
@@ -765,18 +791,33 @@ else:
     def desktop_enabled():
         return CAN_DESKTOP and os.path.exists(desktop_path())
 
+    def _app_entry():
+        return desktop_entry([pythonw(), os.path.abspath(__file__)])
+
     def set_desktop(on):
-        """A launcher with Kemper's icon on the desktop, and in the app menu."""
+        """A launcher with Kemper's icon on the desktop."""
         if not CAN_DESKTOP:
             raise OSError("desktop shortcuts aren't available on macOS")
         if not on:
-            _remove(desktop_path())
-            return _remove(APP_ENTRY)
-        entry = desktop_entry([pythonw(), os.path.abspath(__file__)])
-        for p in (desktop_path(), APP_ENTRY):
-            _write(p, entry, 0o755)
+            return _remove(desktop_path())
+        _write(desktop_path(), _app_entry(), 0o755)
         if shutil.which("gio"):  # GNOME only runs desktop launchers it's been told to trust
             subprocess.run(["gio", "set", desktop_path(), "metadata::trusted", "true"], capture_output=True)
+
+    # App menu: what makes searching for "Kemper" find it. macOS only lists real app bundles, so Linux only.
+    def app_menu_registered():
+        try:
+            with open(APP_ENTRY, encoding="utf-8") as f:
+                return f.read() == _app_entry()
+        except OSError:
+            return False
+
+    def register_app_menu():
+        if CAN_APP_MENU and not app_menu_registered():
+            _write(APP_ENTRY, _app_entry(), 0o755)
+
+    def unregister_app_menu():
+        _remove(APP_ENTRY)
 
     KEYPACK_MIME = "application/x-kemper-keypack"
 
@@ -1378,6 +1419,10 @@ class Api:
         return (r[0] if isinstance(r, (list, tuple)) else r) or None
 
     # --- keypacks: the editor window ---
+    def open_marketplace(self):
+        """Ready-made keypacks on the website, in the default browser."""
+        webbrowser.open(MARKETPLACE_URL)
+
     def open_editor(self, path=None, ai=False):
         import webview
         if self._editor:
@@ -1754,6 +1799,8 @@ def cmd_status():
     print(f"  {('Start with Windows' if IS_WIN else 'Start at login') + ':':<20} {'on' if startup_enabled() else 'off'}")
     if CAN_DESKTOP:
         print(f"  Desktop shortcut:    {'yes' if desktop_enabled() else 'no'}")
+    if CAN_APP_MENU:
+        print(f"  {('In the Start menu' if IS_WIN else 'In the app menu') + ':':<20} {'yes' if app_menu_registered() else 'no'}")
     print(f"  System:              {OS_NAME}")
     print(f"  Settings file:       {CONFIG}")
     print(f"  Program file:        {os.path.abspath(__file__)}")
@@ -1805,6 +1852,11 @@ def cmd_doctor():
         linked = keypacks_registered()
         check(0 if linked else 1, "Keypack files (.kmppck) open in Kemper" if linked else
               "Keypack files (.kmppck) aren't linked to Kemper yet. Fix: open Kemper's window once")
+    if CAN_APP_MENU:
+        menu = "the Start menu" if IS_WIN else "the app menu"
+        listed = app_menu_registered()
+        check(0 if listed else 1, f"Kemper is in {menu}, so searching for it finds it" if listed else
+              f"Kemper isn't in {menu} yet, so searching for it won't find it. Fix: open Kemper's window once")
 
     if running:
         combos = cfg["mappings"] + ([cfg["picker"]] if cfg["picker"]["enabled"] else [])
@@ -1902,6 +1954,9 @@ def cmd_uninstall(yes):
     if CAN_KEYPACK_FILES:
         unregister_keypacks()
         print("Unlinked .kmppck keypack files from Kemper.")
+    if CAN_APP_MENU:
+        unregister_app_menu()
+        print("Removed Kemper from the Start menu." if IS_WIN else "Removed Kemper from the app menu.")
     folder = os.path.dirname(CONFIG)
     if os.path.isdir(folder):
         shutil.rmtree(folder)
@@ -1929,10 +1984,11 @@ def run_gui(hidden, keypack=None):
     api = Api()
     api._pending_keypack = keypack
     serve(srv, api)
-    try:
-        register_keypacks()
-    except OSError:
-        pass  # Kemper still works; only double-clicking keypacks won't
+    for register in (register_keypacks, register_app_menu):
+        try:
+            register()
+        except OSError:
+            pass  # Kemper still works; only double-clicking keypacks, or finding it in Start, won't
     cfg = api._cfg
     dark = cfg["appearance"] == "dark" or (cfg["appearance"] == "system" and os_is_dark())
     win = webview.create_window(APP, html=UI_HTML, js_api=api, width=540, height=680, min_size=(440, 480),
@@ -2211,6 +2267,7 @@ UI_HTML = r'''<!doctype html>
   <div class="card">
     <button class="navrow" id="kpCreate"><span>Create a keypack</span><i class="chev"></i></button>
     <button class="navrow" id="kpImport"><span>Import a keypack…</span><i class="chev"></i></button>
+    <button class="navrow" id="kpMarket"><span>Browse the Marketplace</span><i class="chev"></i></button>
   </div>
   <div class="section-foot" id="kpFoot">Keypacks are sets of shortcuts in .kmppck files that you can share. Double-click one to import it.</div>
 </main>
@@ -2426,6 +2483,7 @@ $("#kpCreate").onclick = () => openSheet("Create a keypack", "A keypack is a set
   }),
 ], [button("Cancel", "", closeSheet)]);
 $("#kpImport").onclick = async () => { const p = await api.choose_keypack(); if (p) openKeypack(p); };
+$("#kpMarket").onclick = () => api.open_marketplace();
 
 // The import question: what's in the keypack, and what it would clash with. Conflicts don't block importing,
 // they only block saving, the same as conflicts you make yourself.
@@ -2592,7 +2650,7 @@ window.addEventListener("pywebviewready", () => { api = window.pywebview.api; })
 # ---------- instructions that teach an AI chat to write keypacks (also in docs/AI_INSTRUCTIONS.md) ----------
 AI_INSTRUCTIONS = r'''# Instructions: create a Kemper keypack
 
-You are helping someone make a keypack for Kemper, a Windows app that types a character or some text whenever a key combination is pressed (for example, Alt+2 types ²). A keypack is a JSON file with the extension .kmppck that holds a named set of these shortcuts. After these instructions, the person will tell you what they want; build the keypack from that.
+You are helping someone make a keypack for Kemper, an app for Windows, macOS and Linux that types a character or some text whenever a key combination is pressed (for example, Alt+2 types ²). A keypack is a JSON file with the extension .kmppck that holds a named set of these shortcuts. After these instructions, the person will tell you what they want; build the keypack from that.
 
 ## Your reply
 

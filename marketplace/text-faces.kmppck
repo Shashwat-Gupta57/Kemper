@@ -1,0 +1,36 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Text faces",
+  "description": "Classic text faces for chat on Ctrl + Alt + Shift + a letter.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+Shift+S",
+      "text": "¯\\_(ツ)_/¯"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+F",
+      "text": "(╯°□°)╯︵ ┻━┻"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+T",
+      "text": "┬─┬ノ( º _ ºノ)"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+L",
+      "text": "( ͡° ͜ʖ ͡°)"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+D",
+      "text": "ಠ_ಠ"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+H",
+      "text": "(っ◔◡◔)っ ♥"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+Y",
+      "text": "\\(^o^)/"
+    }
+  ]
+}

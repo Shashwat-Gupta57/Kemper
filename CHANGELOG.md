@@ -2,6 +2,23 @@
 
 All notable changes to Kemper are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.2.0] - 2026-11-26
+
+The Keypack Marketplace.
+
+### Added
+- **[Keypack Marketplace](marketplace):** 8 ready-made keypacks. They cover superscripts and subscripts, Greek letters, math symbols, arrows, currency symbols, typography, everyday emoji and text faces. No two of them share a combo, so you can import all of them.
+- **Browse the Marketplace** under Keypacks in Kemper's window, which opens it in your browser.
+- On the website, every keypack can be previewed shortcut by shortcut and downloaded.
+- Anyone can add a keypack with a pull request. The tests check that it loads, is listed, and clashes with no other Marketplace keypack.
+- **Kemper is in the Start menu.** The first time the window opens, Kemper adds itself to the Start menu (Windows) or the app menu (Linux), with its icon, so typing *Kemper* in Start finds it. It's fixed on every start if `kemper.pyw` moves. `--status` and `--doctor` show it, and `--uninstall` removes it. On Linux the app menu entry no longer depends on the desktop shortcut switch.
+- Keypacks can carry an optional `"description"`.
+- An issue template for keypack ideas.
+
+### Changed
+- A calmer, cleaner website and README, with the Marketplace front and center.
+- The AI instructions say Kemper runs on Windows, macOS and Linux, not only Windows.
+
 ## [3.1.1] - 2026-11-25
 
 ### Fixed
@@ -104,6 +121,7 @@ First public release. Kemper is rebuilt around a new window, a full command line
 
 - First version: map key combos to text in a tkinter window, with conflicts marked in red and start with Windows.
 
+[3.2.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.2.0
 [3.1.1]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.1.1
 [3.1.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.1.0
 [3.0.1]: https://github.com/Shashwat-Gupta57/Kemper/compare/v3.0.0...v3.1.0

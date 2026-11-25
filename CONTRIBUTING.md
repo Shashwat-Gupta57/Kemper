@@ -25,6 +25,23 @@ Thanks for helping. Kemper is small on purpose, so please keep changes small and
 6. Add a line under a new *Unreleased* heading in [CHANGELOG.md](CHANGELOG.md).
 7. Open a pull request that explains what changed and why.
 
+## Adding a keypack to the Marketplace
+
+The [Marketplace](marketplace) is a folder of `.kmppck` files. To add yours:
+
+1. Make the keypack in Kemper's Keypack Editor, or by hand, or with an AI chat (see [docs/AI_INSTRUCTIONS.md](docs/AI_INSTRUCTIONS.md)). Write every combo in the readable form: `{"keys": "Ctrl+Alt+E", "text": "€"}`.
+2. Add a `"description"`: one short sentence about what the keypack is for.
+3. Save it in `marketplace/` with a short lowercase file name with dashes, like `music-symbols.kmppck`.
+4. Add a row for it to the table in [marketplace/README.md](marketplace/README.md).
+5. Run `python test_kemper.py`. Every Marketplace keypack must:
+   - load in Kemper without errors
+   - use Ctrl or Alt in every combo, and leave Ctrl + C, V, S and the other everyday shortcuts alone
+   - stay off the quick picker's combo (Ctrl + Alt + K) and off Ctrl + Shift + digits, which Windows keeps for itself
+   - share no combo with any other Marketplace keypack, so people can import all of them
+6. Open a pull request. The website picks up the new keypack as soon as it's merged.
+
+A good keypack is easy to remember: use the first letter or a key that looks like the output, Shift for a variant, and the arrow keys for arrows.
+
 ## Guidelines
 
 - Standard library first. A new dependency needs a strong reason.

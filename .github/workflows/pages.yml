@@ -1,11 +1,11 @@
 name: website
 
-# Publishes web/ to GitHub Pages (kemper.talken.in). Screenshots and the AI instructions come
-# straight from docs/, so the site always matches the app.
+# Publishes web/ to GitHub Pages (kemper.talken.in). Screenshots, the AI instructions and the Marketplace
+# keypacks come straight from the repo, so the site always matches it.
 on:
   push:
     branches: [main]
-    paths: ["web/**", "docs/images/**", "docs/AI_INSTRUCTIONS.md", ".github/workflows/pages.yml"]
+    paths: ["web/**", "docs/images/**", "docs/AI_INSTRUCTIONS.md", "marketplace/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -24,14 +24,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assemble the site
         run: |
-          mkdir -p _site/images
+          mkdir -p _site/images _site/marketplace
           cp -r web/. _site/
           cp docs/images/*.png _site/images/
+          cp marketplace/*.kmppck _site/marketplace/
           python3 - <<'EOF'
           doc = open("docs/AI_INSTRUCTIONS.md", encoding="utf-8").read()
           text = doc.split("````text\n", 1)[1].rsplit("\n````", 1)[0]
           assert text.startswith("# Instructions"), "couldn't find the instructions block"
           open("_site/ai-instructions.txt", "w", encoding="utf-8").write(text)
+
+          # The Marketplace gallery on the site reads this list of every keypack and its shortcuts.
+          import glob, json, os
+          packs = []
+          for path in sorted(glob.glob("marketplace/*.kmppck")):
+              pack = json.load(open(path, encoding="utf-8"))
+              packs.append({"file": os.path.basename(path), "name": pack["name"], "description": pack["description"],
+                            "mappings": [{"keys": m["keys"], "text": m["text"]} for m in pack["mappings"]]})
+          assert packs, "no keypacks in marketplace/"
+          json.dump(packs, open("_site/marketplace/index.json", "w", encoding="utf-8"), ensure_ascii=False)
           EOF
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

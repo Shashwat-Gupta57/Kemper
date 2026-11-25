@@ -163,6 +163,27 @@ for bad in ("Hyper+2", "Alt+", "Alt+Banana", "F25", ""):
     except ValueError:
         pass
 
+# --- marketplace: every keypack loads, is listed, and all of them can be imported together without a clash ---
+market = os.path.join(HERE, "marketplace")
+listing = open(os.path.join(market, "README.md"), encoding="utf-8").read()
+everything = []
+for name in sorted(os.listdir(market)):
+    if not name.endswith(".kmppck"):
+        continue
+    raw = json.load(open(os.path.join(market, name), encoding="utf-8"))
+    assert isinstance(raw.get("description"), str) and raw["description"].strip(), f"{name}: needs a description"
+    assert f"({name})" in listing, f"{name} isn't listed in marketplace/README.md"
+    assert all("keys" in m for m in raw["mappings"]), f"{name}: write every combo as \"keys\" (the site reads them)"
+    for m in k.read_keypack(os.path.join(market, name))["mappings"]:
+        assert "Ctrl" in m["mods"] or "Alt" in m["mods"], f"{name}: {k.combo_label(m)} needs Ctrl or Alt"
+        assert not k.takes_common_keys(m), f"{name}: {k.combo_label(m)} takes over a common shortcut"
+        assert k.combo_id(m) != k.combo_id(k.DEFAULT_PICKER), f"{name}: {k.combo_label(m)} is the quick picker's combo"
+        assert not (m["mods"] == ["Ctrl", "Shift"] and m["key"].isdigit()), f"{name}: Windows keeps Ctrl+Shift+digits"
+        everything.append({**m, "pack": name})
+clashes = k.find_conflicts(everything)
+assert not clashes, [f"{m['pack']}: {k.combo_label(m)}" for m in everything if k.combo_id(m) in clashes]
+assert len(everything) > 50
+
 # --- CLI, against a throwaway settings folder ---
 env = {**os.environ, "KEMPER_HOME": tempfile.mkdtemp(), "PYTHONIOENCODING": "utf-8"}
 

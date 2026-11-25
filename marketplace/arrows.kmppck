@@ -1,0 +1,40 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Arrows",
+  "description": "Arrows on Ctrl + Alt + the arrow keys. Add Shift for double arrows.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+Left",
+      "text": "←"
+    },
+    {
+      "keys": "Ctrl+Alt+Right",
+      "text": "→"
+    },
+    {
+      "keys": "Ctrl+Alt+Up",
+      "text": "↑"
+    },
+    {
+      "keys": "Ctrl+Alt+Down",
+      "text": "↓"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+Left",
+      "text": "⇐"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+Right",
+      "text": "⇒"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+Up",
+      "text": "⇑"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+Down",
+      "text": "⇓"
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Super & subscripts",
+  "description": "Raised and lowered digits for x², H₂O and footnotes.",
+  "mappings": [
+    {
+      "keys": "Alt+0",
+      "text": "⁰"
+    },
+    {
+      "keys": "Alt+1",
+      "text": "¹"
+    },
+    {
+      "keys": "Alt+2",
+      "text": "²"
+    },
+    {
+      "keys": "Alt+3",
+      "text": "³"
+    },
+    {
+      "keys": "Alt+4",
+      "text": "⁴"
+    },
+    {
+      "keys": "Alt+5",
+      "text": "⁵"
+    },
+    {
+      "keys": "Alt+6",
+      "text": "⁶"
+    },
+    {
+      "keys": "Alt+7",
+      "text": "⁷"
+    },
+    {
+      "keys": "Alt+8",
+      "text": "⁸"
+    },
+    {
+      "keys": "Alt+9",
+      "text": "⁹"
+    },
+    {
+      "keys": "Alt+Shift+0",
+      "text": "₀"
+    },
+    {
+      "keys": "Alt+Shift+1",
+      "text": "₁"
+    },
+    {
+      "keys": "Alt+Shift+2",
+      "text": "₂"
+    },
+    {
+      "keys": "Alt+Shift+3",
+      "text": "₃"
+    },
+    {
+      "keys": "Alt+Shift+4",
+      "text": "₄"
+    },
+    {
+      "keys": "Alt+Shift+5",
+      "text": "₅"
+    },
+    {
+      "keys": "Alt+Shift+6",
+      "text": "₆"
+    },
+    {
+      "keys": "Alt+Shift+7",
+      "text": "₇"
+    },
+    {
+      "keys": "Alt+Shift+8",
+      "text": "₈"
+    },
+    {
+      "keys": "Alt+Shift+9",
+      "text": "₉"
+    }
+  ]
+}

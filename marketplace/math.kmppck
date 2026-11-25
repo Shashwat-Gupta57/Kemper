@@ -1,0 +1,64 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Math symbols",
+  "description": "Everyday math symbols and fractions on Ctrl + Alt.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+=",
+      "text": "≠"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+=",
+      "text": "±"
+    },
+    {
+      "keys": "Ctrl+Alt+X",
+      "text": "×"
+    },
+    {
+      "keys": "Ctrl+Alt+/",
+      "text": "÷"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+,",
+      "text": "≤"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+.",
+      "text": "≥"
+    },
+    {
+      "keys": "Ctrl+Alt+`",
+      "text": "≈"
+    },
+    {
+      "keys": "Ctrl+Alt+I",
+      "text": "∞"
+    },
+    {
+      "keys": "Ctrl+Alt+\\",
+      "text": "√"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+I",
+      "text": "∫"
+    },
+    {
+      "keys": "Ctrl+Alt+O",
+      "text": "°"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+2",
+      "text": "½"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+3",
+      "text": "⅓"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+4",
+      "text": "¼"
+    }
+  ]
+}

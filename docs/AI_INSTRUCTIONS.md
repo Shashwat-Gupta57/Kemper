@@ -19,7 +19,7 @@ Kemper validates everything the AI writes. Broken shortcuts are refused with a m
 ````text
 # Instructions: create a Kemper keypack
 
-You are helping someone make a keypack for Kemper, a Windows app that types a character or some text whenever a key combination is pressed (for example, Alt+2 types ²). A keypack is a JSON file with the extension .kmppck that holds a named set of these shortcuts. After these instructions, the person will tell you what they want; build the keypack from that.
+You are helping someone make a keypack for Kemper, an app for Windows, macOS and Linux that types a character or some text whenever a key combination is pressed (for example, Alt+2 types ²). A keypack is a JSON file with the extension .kmppck that holds a named set of these shortcuts. After these instructions, the person will tell you what they want; build the keypack from that.
 
 ## Your reply
 

@@ -1,0 +1,48 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Everyday emoji",
+  "description": "The ten emoji people reach for most, on Ctrl + Alt + a digit.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+1",
+      "text": "👍"
+    },
+    {
+      "keys": "Ctrl+Alt+2",
+      "text": "❤️"
+    },
+    {
+      "keys": "Ctrl+Alt+3",
+      "text": "😂"
+    },
+    {
+      "keys": "Ctrl+Alt+4",
+      "text": "🙏"
+    },
+    {
+      "keys": "Ctrl+Alt+5",
+      "text": "🎉"
+    },
+    {
+      "keys": "Ctrl+Alt+6",
+      "text": "🔥"
+    },
+    {
+      "keys": "Ctrl+Alt+7",
+      "text": "✅"
+    },
+    {
+      "keys": "Ctrl+Alt+8",
+      "text": "😊"
+    },
+    {
+      "keys": "Ctrl+Alt+9",
+      "text": "👀"
+    },
+    {
+      "keys": "Ctrl+Alt+0",
+      "text": "❌"
+    }
+  ]
+}

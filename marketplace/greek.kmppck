@@ -1,0 +1,140 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Greek letters",
+  "description": "Greek letters on Alt + a similar letter, capitals on Alt + Shift.",
+  "mappings": [
+    {
+      "keys": "Alt+A",
+      "text": "α"
+    },
+    {
+      "keys": "Alt+B",
+      "text": "β"
+    },
+    {
+      "keys": "Alt+G",
+      "text": "γ"
+    },
+    {
+      "keys": "Alt+D",
+      "text": "δ"
+    },
+    {
+      "keys": "Alt+E",
+      "text": "ε"
+    },
+    {
+      "keys": "Alt+Z",
+      "text": "ζ"
+    },
+    {
+      "keys": "Alt+H",
+      "text": "η"
+    },
+    {
+      "keys": "Alt+Q",
+      "text": "θ"
+    },
+    {
+      "keys": "Alt+I",
+      "text": "ι"
+    },
+    {
+      "keys": "Alt+K",
+      "text": "κ"
+    },
+    {
+      "keys": "Alt+L",
+      "text": "λ"
+    },
+    {
+      "keys": "Alt+M",
+      "text": "μ"
+    },
+    {
+      "keys": "Alt+N",
+      "text": "ν"
+    },
+    {
+      "keys": "Alt+X",
+      "text": "ξ"
+    },
+    {
+      "keys": "Alt+P",
+      "text": "π"
+    },
+    {
+      "keys": "Alt+R",
+      "text": "ρ"
+    },
+    {
+      "keys": "Alt+S",
+      "text": "σ"
+    },
+    {
+      "keys": "Alt+T",
+      "text": "τ"
+    },
+    {
+      "keys": "Alt+U",
+      "text": "υ"
+    },
+    {
+      "keys": "Alt+F",
+      "text": "φ"
+    },
+    {
+      "keys": "Alt+C",
+      "text": "χ"
+    },
+    {
+      "keys": "Alt+Y",
+      "text": "ψ"
+    },
+    {
+      "keys": "Alt+W",
+      "text": "ω"
+    },
+    {
+      "keys": "Alt+Shift+G",
+      "text": "Γ"
+    },
+    {
+      "keys": "Alt+Shift+D",
+      "text": "Δ"
+    },
+    {
+      "keys": "Alt+Shift+Q",
+      "text": "Θ"
+    },
+    {
+      "keys": "Alt+Shift+L",
+      "text": "Λ"
+    },
+    {
+      "keys": "Alt+Shift+X",
+      "text": "Ξ"
+    },
+    {
+      "keys": "Alt+Shift+P",
+      "text": "Π"
+    },
+    {
+      "keys": "Alt+Shift+S",
+      "text": "Σ"
+    },
+    {
+      "keys": "Alt+Shift+F",
+      "text": "Φ"
+    },
+    {
+      "keys": "Alt+Shift+Y",
+      "text": "Ψ"
+    },
+    {
+      "keys": "Alt+Shift+W",
+      "text": "Ω"
+    }
+  ]
+}

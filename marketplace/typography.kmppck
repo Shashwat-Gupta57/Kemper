@@ -1,0 +1,52 @@
+{
+  "format": "kemper-keypack",
+  "version": 1,
+  "name": "Typography",
+  "description": "Dashes, curly quotes, the ellipsis, bullets and © ® ™ for writing.",
+  "mappings": [
+    {
+      "keys": "Ctrl+Alt+-",
+      "text": "–"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+-",
+      "text": "—"
+    },
+    {
+      "keys": "Ctrl+Alt+.",
+      "text": "…"
+    },
+    {
+      "keys": "Ctrl+Alt+[",
+      "text": "“"
+    },
+    {
+      "keys": "Ctrl+Alt+]",
+      "text": "”"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+[",
+      "text": "‘"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+]",
+      "text": "’"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+8",
+      "text": "•"
+    },
+    {
+      "keys": "Ctrl+Alt+C",
+      "text": "©"
+    },
+    {
+      "keys": "Ctrl+Alt+Shift+R",
+      "text": "®"
+    },
+    {
+      "keys": "Ctrl+Alt+T",
+      "text": "™"
+    }
+  ]
+}
