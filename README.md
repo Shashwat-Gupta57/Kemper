@@ -4,7 +4,7 @@
 
 <p align="center"><a href="https://kemper.talken.in"><b>kemper.talken.in</b></a> · <a href="https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw">Download</a> · <a href="docs/DOCUMENTATION.md">Documentation</a></p>
 
-**Kemper** (short for **Key Mapper**) types a character or a piece of text when you press a key combo, in any app on Windows.
+**Kemper** (short for **Key Mapper**) types a character or a piece of text when you press a key combo, in any app on Windows, macOS or Linux.
 
 Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Press **Ctrl + Alt + E** and get **€**. You choose the combos and the text. Can't remember them all? Press **Ctrl + Alt + K** to pick from a list, like **Win + V** does for the clipboard.
 
@@ -14,7 +14,7 @@ Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Pre
 </p>
 
 [![tests](https://github.com/Shashwat-Gupta57/Kemper/actions/workflows/tests.yml/badge.svg)](https://github.com/Shashwat-Gupta57/Kemper/actions/workflows/tests.yml)
-![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
+![Windows, macOS, Linux](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-0078D4)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -27,30 +27,48 @@ Press **Alt + 2** and get **²**. Press **Alt + Shift + 2** and get **₂**. Pre
 - **Keypacks.** Share sets of shortcuts as `.kmppck` files. Double-click one to preview it and import it.
 - **Made by AI.** Describe the shortcuts you want to any AI chat, paste its answer into Kemper, done.
 - **Catches clashes.** If two shortcuts use the same keys, both turn red and Kemper won't save until you fix them.
-- **Light and dark mode.** Follows Windows, or pick one yourself.
-- **Starts with Windows** if you want, and runs quietly in the background. Closing the window doesn't stop it.
-- **Desktop shortcut** with Kemper's own icon, one switch away.
+- **Light and dark mode.** Follows your system, or pick one yourself.
+- **Starts when you sign in** if you want, and runs quietly in the background. Closing the window doesn't stop it.
+- **Desktop shortcut** with Kemper's own icon, one switch away (Windows and Linux).
+- **Windows, macOS and Linux.** Your settings and keypacks work on all three.
 - **Deactivate** turns every shortcut off without quitting.
 - **Full command line.** Run it with no window, and add, remove, list and check shortcuts from a terminal.
 - **One file.** The whole program is [`kemper.pyw`](kemper.pyw).
 
 ## Get started
 
-You need **Windows 10 or 11** and **[Python 3.10 or newer](https://www.python.org/downloads/)**.
+Download [`kemper.pyw`](https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw) and put it in a folder where it can stay. You need [Python 3.10 or newer](https://www.python.org/downloads/).
 
-1. Download [`kemper.pyw`](kemper.pyw) and put it in a folder where it can stay, for example `C:\Tools\Kemper\`.
-2. Install the one library the window uses:
+### Windows 10 and 11
 
-   ```powershell
-   python -m pip install pywebview
-   ```
+```powershell
+python -m pip install pywebview
+```
 
-3. Double-click `kemper.pyw`. The window opens.
-4. In the window, turn on:
-   - **Start with Windows** to have Kemper running every time you sign in.
-   - **Desktop shortcut** to get a Kemper icon on your desktop. Windows always shows a `.pyw` file with Python's icon; the shortcut carries Kemper's.
+Double-click `kemper.pyw`. In the window, turn on **Start with Windows** and **Desktop shortcut** if you want them. Windows always shows a `.pyw` file with Python's icon, so the desktop shortcut is what carries Kemper's icon.
 
-Only using the command line? You can skip pywebview. See [From the command line](#from-the-command-line).
+### macOS
+
+```bash
+python3 -m venv ~/.kemper
+~/.kemper/bin/pip install pywebview pynput
+~/.kemper/bin/python kemper.pyw
+```
+
+The first time, macOS asks to let Terminal (or Python) **monitor input** and use **Accessibility**. Allow both in System Settings → Privacy & Security, then start Kemper again. Kemper can't see or type keys without them. Turn on **Start at login** in the window if you want it.
+
+### Ubuntu and other Linux
+
+```bash
+sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 xclip
+python3 -m venv --system-site-packages ~/.kemper
+~/.kemper/bin/pip install pywebview python-xlib
+~/.kemper/bin/python kemper.pyw
+```
+
+Kemper needs an **X11 session**. On Ubuntu's login screen, click the gear and pick **"Ubuntu on Xorg"**. Wayland, the default, doesn't let any app have global hotkeys. Turn on **Start at login** and **Desktop shortcut** in the window if you want them; double-clicking `.kmppck` keypacks works too.
+
+`python3 kemper.pyw --doctor` checks your setup on any system and tells you what's missing. Only using the command line? You can skip pywebview. See [From the command line](#from-the-command-line).
 
 ## Use it
 
@@ -159,7 +177,7 @@ Added Alt + Shift + 2  →  ₂
 kemper: Alt + 2 already types ². Remove it first:  python kemper.pyw --remove "alt+2"
 
 > python kemper.pyw --autostart on
-Kemper will start when you sign in to Windows.
+Kemper will start when you sign in.
 ```
 
 Run Kemper with no window at all. Every shortcut you use is logged as it happens:
@@ -186,7 +204,7 @@ Kemper 3.0.0 doctor
   ✓  2 shortcut(s) saved in C:\Users\you\AppData\Roaming\Kemper\mappings.json
   ✓  Shortcuts are active
   ✓  Kemper is running
-  ✓  Starts with Windows
+  ✓  Starts when you sign in
   ✓  Skipped the hotkey check because the running Kemper is holding them
 
 All good.
@@ -203,7 +221,7 @@ All commands:
 | `--remove COMBO` | Remove a shortcut |
 | `--picker COMBO` / `on` / `off` | Set the quick picker's combo, or turn it on or off |
 | `--activate` / `--deactivate` | Turn all shortcuts on or off |
-| `--autostart on` / `off` | Start Kemper when you sign in to Windows, or stop doing so |
+| `--autostart on` / `off` | Start Kemper when you sign in, or stop doing so |
 | `--desktop on` / `off` | Add or remove the desktop shortcut with Kemper's icon |
 | `--keypack FILE` | Open a keypack and ask whether to import it, like double-clicking it |
 | `--ai-instructions` | Print the instructions that let an AI chat write keypacks |
@@ -233,7 +251,7 @@ python kemper.pyw --uninstall
 
 This asks you to confirm, then:
 - stops Kemper
-- removes it from Windows startup and the desktop, and unlinks `.kmppck` files
+- removes it from startup and the desktop, and unlinks `.kmppck` files
 - deletes your shortcuts and settings
 - deletes `kemper.pyw` itself It changes nothing else on your PC. Add `--yes` to skip the question.
 

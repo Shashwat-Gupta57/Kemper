@@ -22,5 +22,5 @@ labels: bug
 paste here
 ```
 
-**Windows version and keyboard layout**
+**System (Windows, macOS or Linux + version) and keyboard layout**
 

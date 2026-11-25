@@ -2,6 +2,33 @@
 
 All notable changes to Kemper are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] - 2026-11-25
+
+Kemper runs on macOS and Linux too.
+
+### Added
+- **macOS:**
+  - Hotkeys through a Quartz event tap, via pynput. The app in front never sees Kemper's combos.
+  - Unicode typing.
+  - Start at login with a LaunchAgent.
+  - The window shows Cmd and Option.
+- **Linux (X11):**
+  - Hotkeys through X11 key grabs, and Unicode typing through the X11 test extension, with python-xlib only (pure Python, nothing to compile).
+  - Start at login, a desktop and app-menu launcher with Kemper's icon, and double-click for `.kmppck` keypacks through the shared MIME database.
+  - The window shows Super.
+- Settings and keypacks are identical on every system. `Cmd`, `Option` and `Super` are accepted when typing combos.
+- `--doctor` checks each system's needs: macOS Accessibility, X11 versus Wayland, and a clipboard tool on Linux. `--status` shows the system.
+- Settings live in each system's usual folder, or in `KEMPER_HOME` if it's set.
+- CI runs the tests on Windows, macOS and Ubuntu.
+
+### Changed
+- All Windows code sits in one block, unchanged, behind the same functions as the macOS and Linux versions.
+- The quick picker opens by the mouse and stays on screen on every system.
+- The window names startup per system: "Start with Windows" on Windows, "Start at login" elsewhere.
+
+### Fixed
+- The website's screenshots keep their real proportions on every screen size.
+
 ## [3.0.1] - 2026-11-25
 
 ### Added
@@ -72,7 +99,8 @@ First public release. Kemper is rebuilt around a new window, a full command line
 
 - First version: map key combos to text in a tkinter window, with conflicts marked in red and start with Windows.
 
-[3.0.1]: https://github.com/Shashwat-Gupta57/Kemper/compare/v3.0.0...main
+[3.1.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.1.0
+[3.0.1]: https://github.com/Shashwat-Gupta57/Kemper/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v3.0.0
 [2.0.0]: https://github.com/Shashwat-Gupta57/Kemper/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Shashwat-Gupta57/Kemper/commit/89c2d7b

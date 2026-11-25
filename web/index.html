@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kemper: type any character with a key combo</title>
-<meta name="description" content="Kemper (Key Mapper) is a free Windows app: press a key combo like Alt + 2 and get ², €, →, emoji or whole phrases in any app. Share shortcuts as keypacks, or have an AI write them.">
+<meta name="description" content="Kemper (Key Mapper) is a free app for Windows, macOS and Linux: press a key combo like Alt + 2 and get ², €, →, emoji or whole phrases in any app. Share shortcuts as keypacks, or have an AI write them.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" href="images/icon.png">
 <link rel="canonical" href="https://kemper.talken.in/">
 <meta property="og:title" content="Kemper: type any character with a key combo">
-<meta property="og:description" content="Press Alt + 2, get ². Map any key combo to any character or text, in every Windows app. Free and open source.">
+<meta property="og:description" content="Press Alt + 2, get ². Map any key combo to any character or text, in every app on Windows, macOS and Linux. Free and open source.">
 <meta property="og:image" content="https://kemper.talken.in/images/icon.png">
 <meta property="og:url" content="https://kemper.talken.in/">
 <meta property="og:type" content="website">
@@ -39,7 +39,7 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
   a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  img { max-width: 100%; display: block; }
+  img { max-width: 100%; height: auto; display: block; }  /* height: auto keeps each screenshot's real proportions */
   .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
   :focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 6px; }
 
@@ -114,7 +114,11 @@
   .step p { margin: 0; color: var(--sub); font-size: 15.5px; }
   .code { position: relative; margin-top: 12px; background: var(--code); color: var(--code-text); border-radius: 12px; padding: 14px 16px; font: 14px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
   @media (prefers-color-scheme: light) { .code { box-shadow: 0 6px 24px rgba(0,0,0,.12); } }
-  .cmd { display: flex; align-items: center; gap: 10px; margin-top: 12px; background: var(--code); color: var(--code-text); border-radius: 12px; padding: 9px 9px 9px 16px; }
+  [hidden] { display: none !important; }
+  .os-seg { display: inline-flex; background: color-mix(in srgb, var(--sub) 18%, transparent); border-radius: 11px; padding: 3px; margin: 0 0 18px; }
+  .os-seg button { border: 0; background: none; color: var(--text); font: 600 15px var(--font); padding: 8px 18px; border-radius: 9px; cursor: pointer; }
+  .os-seg button[aria-selected="true"] { background: var(--blue); color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+  .cmd { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; background: var(--code); color: var(--code-text); border-radius: 12px; padding: 9px 9px 9px 16px; }
   .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: pre; font: 14px/1.6 var(--mono); }
   .cmd .copy { flex: none; }
   @media (max-width: 520px) { .step { padding: 18px 18px 18px 60px; } .step::before { left: 16px; top: 18px; } }
@@ -168,12 +172,12 @@
   <header class="hero wrap">
     <img class="icon" src="images/icon.png" alt="Kemper's icon">
     <h1>Any character.<br>One key combo.</h1>
-    <p class="lede"><b>Kemper</b>, short for <b>Key Mapper</b>, types the character or text you choose whenever you press a key combo, in every Windows app. Alt + 2 gives ². Ctrl + Alt + E gives €.</p>
+    <p class="lede"><b>Kemper</b>, short for <b>Key Mapper</b>, types the character or text you choose whenever you press a key combo, in every app on Windows, macOS and Linux. Alt + 2 gives ². Ctrl + Alt + E gives €.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw">Download for Windows</a>
+      <a class="btn primary" href="https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw">Download Kemper</a>
       <a class="btn plain" href="https://github.com/Shashwat-Gupta57/Kemper">View on GitHub</a>
     </div>
-    <p class="fine">Free and open source · Windows 10 and 11 · One file</p>
+    <p class="fine">Free and open source · Windows, macOS and Linux · One file</p>
 
     <div class="demo" aria-label="Demo: pressing a key combo types a character">
       <div class="keys" id="keys"></div>
@@ -195,7 +199,7 @@
           <div class="feature"><div class="tile" style="background: var(--blue)">⌨</div><h3>Set a combo like in a game</h3><p>Click the key box, press the keys, type what they should produce. Done.</p></div>
           <div class="feature"><div class="tile" style="background: var(--red)">!</div><h3>Clashes can't slip through</h3><p>Two shortcuts with the same keys turn red, and Kemper won't save until you fix them.</p></div>
           <div class="feature"><div class="tile" style="background: var(--purple)">✦</div><h3>Any text at all</h3><p>Symbols, accents, emoji, other scripts, whole sentences. It works with every keyboard layout.</p></div>
-          <div class="feature"><div class="tile" style="background: var(--indigo)">◐</div><h3>Light and dark</h3><p>Follows Windows, or pick a side. Starts with Windows if you like, and closing it doesn't stop it.</p></div>
+          <div class="feature"><div class="tile" style="background: var(--indigo)">◐</div><h3>Light and dark</h3><p>Follows your system, or pick a side. Starts when you sign in if you like, and closing it doesn't stop it.</p></div>
         </div>
       </div>
     </div>
@@ -279,12 +283,35 @@
     <div class="wrap">
       <div class="eyebrow">Get started</div>
       <h2>Up and running in a minute.</h2>
-      <p class="intro">You need Windows 10 or 11 and <a href="https://www.python.org/downloads/">Python 3.10 or newer</a>. Tick “Add python.exe to PATH” when installing it.</p>
-      <div class="steps">
-        <div class="step"><h3>Download kemper.pyw</h3><p>It's the whole program. Put it in a folder where it can stay, like <code>C:\Tools\Kemper</code>.</p></div>
+      <p class="intro">You need <a href="https://www.python.org/downloads/">Python 3.10 or newer</a>. Pick your system:</p>
+      <div class="os-seg" role="tablist" aria-label="Your system">
+        <button role="tab" data-os="win">Windows</button><button role="tab" data-os="mac">macOS</button><button role="tab" data-os="linux">Linux</button>
+      </div>
+
+      <div class="steps" data-for="win">
+        <div class="step"><h3>Download kemper.pyw</h3><p>It's the whole program. Put it in a folder where it can stay, like <code>C:\Tools\Kemper</code>. When installing Python, tick “Add python.exe to PATH”.</p></div>
         <div class="step"><h3>Install the window's one library</h3><p>Open a terminal and run:</p>
           <div class="cmd"><code><span class="prompt">&gt; </span>python -m pip install pywebview</code><button class="copy" data-copy="python -m pip install pywebview">Copy</button></div></div>
         <div class="step"><h3>Double-click kemper.pyw</h3><p>Turn on <b>Start with Windows</b> and <b>Desktop shortcut</b> if you want them, then click <b>Add Shortcut</b>, press a combo, type its text and click <b>Save</b>.</p></div>
+      </div>
+
+      <div class="steps" data-for="mac" hidden>
+        <div class="step"><h3>Download kemper.pyw</h3><p>It's the whole program. Put it in a folder where it can stay, like <code>~/Applications/Kemper</code>.</p></div>
+        <div class="step"><h3>Set it up and start it</h3><p>In Terminal, in that folder:</p>
+          <div class="cmd"><code>python3 -m venv ~/.kemper
+~/.kemper/bin/pip install pywebview pynput
+~/.kemper/bin/python kemper.pyw</code><button class="copy" data-copy="python3 -m venv ~/.kemper &amp;&amp; ~/.kemper/bin/pip install pywebview pynput &amp;&amp; ~/.kemper/bin/python kemper.pyw">Copy</button></div></div>
+        <div class="step"><h3>Allow keyboard access</h3><p>macOS asks for <b>Input Monitoring</b> and <b>Accessibility</b>. Allow them in System Settings → Privacy &amp; Security, then start Kemper again. Turn on <b>Start at login</b> if you like.</p></div>
+      </div>
+
+      <div class="steps" data-for="linux" hidden>
+        <div class="step"><h3>Download kemper.pyw</h3><p>It's the whole program. Put it in a folder where it can stay, like <code>~/kemper</code>.</p></div>
+        <div class="step"><h3>Install what it needs (Ubuntu)</h3><p>In a terminal, in that folder:</p>
+          <div class="cmd"><code>sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 xclip
+python3 -m venv --system-site-packages ~/.kemper
+~/.kemper/bin/pip install pywebview python-xlib
+~/.kemper/bin/python kemper.pyw</code><button class="copy" data-copy="sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 xclip &amp;&amp; python3 -m venv --system-site-packages ~/.kemper &amp;&amp; ~/.kemper/bin/pip install pywebview python-xlib &amp;&amp; ~/.kemper/bin/python kemper.pyw">Copy</button></div></div>
+        <div class="step"><h3>Use an Xorg session</h3><p>Global hotkeys need X11. At the login screen, click the gear and choose <b>Ubuntu on Xorg</b>. Then turn on <b>Start at login</b> and <b>Desktop shortcut</b> if you like.</p></div>
       </div>
     </div>
   </section>
@@ -327,7 +354,7 @@ All good.</div>
           <a class="btn primary" href="https://github.com/Shashwat-Gupta57/Kemper/releases/latest/download/kemper.pyw">Download kemper.pyw</a>
           <a class="btn plain" href="https://github.com/Shashwat-Gupta57/Kemper/releases">All releases</a>
         </div>
-        <div class="req"><span>Windows 10 or 11</span><span>Python 3.10+</span><span>pywebview (for the window)</span><span>MIT License</span></div>
+        <div class="req"><span>Windows, macOS, Linux (X11)</span><span>Python 3.10+</span><span>pywebview (for the window)</span><span>MIT License</span></div>
       </div>
     </div>
   </section>
@@ -403,6 +430,15 @@ async function copy(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
 }
 document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => say(await copy(b.dataset.copy) ? "Copied" : "Couldn't copy"));
+
+// ---- Get started: show the visitor's system first ----
+function showOs(os) {
+  document.querySelectorAll(".os-seg button").forEach(b => b.setAttribute("aria-selected", b.dataset.os === os));
+  document.querySelectorAll(".steps[data-for]").forEach(s => s.hidden = s.dataset.for !== os);
+}
+document.querySelectorAll(".os-seg button").forEach(b => b.onclick = () => showOs(b.dataset.os));
+const ua = (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent).toLowerCase();
+showOs(ua.includes("mac") ? "mac" : ua.includes("linux") && !ua.includes("android") ? "linux" : "win");
 
 // ---- AI instructions: the same text Kemper itself gives, published with the site ----
 let aiText = null;

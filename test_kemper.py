@@ -1,4 +1,4 @@
-"""Self-checks for Kemper. Run:  python test_kemper.py   (Windows only, needs no GUI)."""
+"""Self-checks for Kemper. Run:  python test_kemper.py   (Windows, macOS or Linux; needs no GUI or display)."""
 import importlib.machinery, importlib.util, json, os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,13 +92,13 @@ pack_maps = [
     {"mods": ["Alt"], "vk": 0x33, "key": "3", "text": "³"},             # twice in the pack
     {"mods": ["Alt"], "vk": 0x33, "key": "3", "text": "3rd"},
     {"mods": ["Ctrl", "Alt"], "vk": 0x4B, "key": "K", "text": "k"},     # the quick picker's combo
-    {"mods": ["Ctrl"], "vk": ord("C"), "key": "C", "text": "©"},        # takes over copy
+    {"mods": ["Win" if k.IS_MAC else "Ctrl"], "vk": ord("C"), "key": "C", "text": "©"},  # copy: Ctrl+C (Cmd+C on a Mac)
     {"mods": ["Shift"], "vk": ord("A"), "key": "A", "text": "α"},       # takes over typing
     {"mods": ["Alt"], "vk": 0x34, "key": "4", "text": "⁴"},             # fine
 ]
 levels = [(i["level"], i["issue"]) for i in k.keypack_preview(pack_maps, cfg)]
 assert [l for l, _ in levels] == ["same", "bad", "bad", "bad", "bad", "warn", "warn", ""], levels
-assert "€" in levels[1][1] and "quick picker" in levels[4][1] and "Ctrl + C" in levels[5][1]
+assert "€" in levels[1][1] and "quick picker" in levels[4][1] and k.display_label(pack_maps[5]) in levels[5][1]
 
 # --- keypacks written by AI: readable "keys" form, chatter around the JSON, the instructions themselves ---
 reply = '''Sure! Here's your keypack:
@@ -164,13 +164,16 @@ for bad in ("Hyper+2", "Alt+", "Alt+Banana", "F25", ""):
         pass
 
 # --- CLI, against a throwaway settings folder ---
-env = {**os.environ, "APPDATA": tempfile.mkdtemp(), "PYTHONIOENCODING": "utf-8"}
+env = {**os.environ, "KEMPER_HOME": tempfile.mkdtemp(), "PYTHONIOENCODING": "utf-8"}
 
 # --- icon: the embedded PNGs become a valid .ico (header: reserved 0, type 1, one entry per size) ---
-k.CONFIG = os.path.join(env["APPDATA"], "Kemper", "mappings.json")
-ico = open(k.icon_path(), "rb").read()
-assert ico[:4] == b"\0\0\1\0" and int.from_bytes(ico[4:6], "little") == len(k.ICON_PNGS)
-assert ico[6 + 16 * len(k.ICON_PNGS):][:8] == b"\x89PNG\r\n\x1a\n"
+k.CONFIG = os.path.join(env["KEMPER_HOME"], "mappings.json")
+icon = open(k.icon_path(), "rb").read()
+if k.IS_WIN:  # .ico header: reserved 0, type 1, one entry per size, then the PNGs themselves
+    assert icon[:4] == b"\0\0\1\0" and int.from_bytes(icon[4:6], "little") == len(k.ICON_PNGS)
+    assert icon[6 + 16 * len(k.ICON_PNGS):][:8] == b"\x89PNG\r\n\x1a\n"
+else:
+    assert icon[:8] == b"\x89PNG\r\n\x1a\n"
 
 def cli(*args):
     r = subprocess.run([sys.executable, PROGRAM, *args], env=env, capture_output=True, text=True, encoding="utf-8")
@@ -188,7 +191,7 @@ code, out = cli("--remove", "Alt+2")
 assert code == 0 and "No shortcuts yet" in cli("--keys")[1], out
 code, out = cli("--remove", "Alt+2")
 assert code == 1 and "No shortcut uses" in out, out
-saved = json.load(open(os.path.join(env["APPDATA"], "Kemper", "mappings.json"), encoding="utf-8"))
+saved = json.load(open(os.path.join(env["KEMPER_HOME"], "mappings.json"), encoding="utf-8"))
 assert saved["mappings"] == [] and saved["active"] is False
 code, out = cli("--add", "Ctrl+Alt+K", "k")  # the picker's default combo
 assert code == 1 and "opens the quick picker" in out, out

@@ -20,26 +20,64 @@ Kemper (Key Mapper) types a character or text when you press a key combo, in any
 
 ## Requirements
 
-| | Needed for | Notes |
+Kemper runs on **Windows 10 and 11**, **macOS** and **Linux with an X11 session**. All of them need [Python 3.10 or newer](https://www.python.org/downloads/) (on Windows, tick *Add python.exe to PATH* when installing).
+
+| System | Needed for the shortcuts | Needed for the window |
 |---|---|---|
-| Windows 10 or 11 | everything | Kemper uses Windows' own hotkey and typing functions |
-| Python 3.10+ | everything | [python.org](https://www.python.org/downloads/). Tick *Add python.exe to PATH* when installing |
-| [pywebview](https://pywebview.flowrl.com/) | the window | `python -m pip install pywebview`. Not needed for the CLI |
-| Edge WebView2 Runtime | the window | Built into Windows 11 and current Windows 10. [Download](https://go.microsoft.com/fwlink/p/?LinkId=2124703) if `--doctor` says it's missing |
+| Windows | nothing extra | [pywebview](https://pywebview.flowrl.com/), plus Edge WebView2 (built into Windows 11 and current Windows 10; [download](https://go.microsoft.com/fwlink/p/?LinkId=2124703) if `--doctor` says it's missing) |
+| macOS | [pynput](https://pypi.org/project/pynput/), and Accessibility and Input Monitoring permission | pywebview |
+| Linux | [python-xlib](https://pypi.org/project/python-xlib/), and an X11 (Xorg) session | pywebview, plus GTK's WebKit (`gir1.2-webkit2-4.1`) |
+
+The command line, including `--cli`, never needs pywebview.
 
 ## Getting started
 
 Kemper is a single file, `kemper.pyw`. There's no installer: put it in a folder where it can stay and run it.
 
-**With the window:**
+**Windows**
 1. Install the window's library: `python -m pip install pywebview`
 2. Double-click `kemper.pyw`.
 3. To have Kemper running every time you sign in, turn on **Start with Windows** in the window.
 4. To get Kemper's icon on your desktop, turn on **Desktop shortcut**. Windows always draws a `.pyw` file with Python's icon, and a script can't carry an icon of its own, so Kemper puts its icon on a shortcut instead.
 
-**Command line only:** pywebview isn't needed. Use `python kemper.pyw --cli` to run Kemper in a terminal, and `python kemper.pyw --autostart on` to start it with Windows. If pywebview is missing, Kemper still runs your shortcuts at sign-in, just without a window.
+**macOS**
 
-Starting with Windows points at the exact path of `kemper.pyw`. If you move the file, switch **Start with Windows** off and on again, or run `--autostart on` from the new place. `--doctor` warns you if the startup entry points to an old location.
+```bash
+python3 -m venv ~/.kemper
+~/.kemper/bin/pip install pywebview pynput
+~/.kemper/bin/python kemper.pyw
+```
+
+macOS asks for **Input Monitoring** and **Accessibility** the first time. Allow the app you started Kemper from (Terminal, or Python itself) in System Settings → Privacy & Security, then start Kemper again. If shortcuts work from Terminal but not after you sign in, also add the Python app there, since that's what runs Kemper at login. Turn on **Start at login** in the window if you want it.
+
+**Ubuntu and other Linux**
+
+```bash
+sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 xclip
+python3 -m venv --system-site-packages ~/.kemper
+~/.kemper/bin/pip install pywebview python-xlib
+~/.kemper/bin/python kemper.pyw
+```
+
+`--system-site-packages` lets the environment use the GTK bindings apt installed. Kemper needs an **X11 session**: at Ubuntu's login screen, click the gear and choose **"Ubuntu on Xorg"**. Then turn on **Start at login** and **Desktop shortcut** in the window if you want them.
+
+**Command line only:** pywebview isn't needed on any system. Use `kemper.pyw --cli` to run Kemper in a terminal and `--autostart on` to start it when you sign in. If pywebview is missing, Kemper still runs your shortcuts at sign-in, just without a window.
+
+Starting at sign-in points at the exact path of `kemper.pyw` and the Python that ran it. If you move the file, switch **Start at login** (or **Start with Windows**) off and on again, or run `--autostart on` from the new place. `--doctor` warns you if the startup entry points to an old location.
+
+### Differences between systems
+
+| | Windows | macOS | Linux (X11) |
+|---|---|---|---|
+| Shortcuts, typing, quick picker, keypacks, CLI | ✓ | ✓ | ✓ |
+| Start at sign-in | ✓ (Run key) | ✓ (LaunchAgent) | ✓ (autostart entry) |
+| Desktop shortcut with Kemper's icon | ✓ | — | ✓ (desktop and app menu) |
+| Double-click `.kmppck` to import | ✓ | — (use **Import a keypack…**) | ✓ |
+| Modifier names in the window | Ctrl, Alt, Shift, Win | Ctrl, Option, Shift, Cmd | Ctrl, Alt, Shift, Super |
+
+macOS only gives desktop icons and file types to real, signed app bundles, which a single script can't be.
+
+Settings and keypacks are identical on every system. Kemper always stores the fourth modifier as `Win`, so a keypack made on Windows with Win + K is Cmd + K on a Mac and Super + K on Linux. When you type combos on the command line you can write `Cmd`, `Option` or `Super` too.
 
 ## The window
 
@@ -49,7 +87,7 @@ Open it by running `kemper.pyw` (double-click works), or with `python kemper.pyw
 |---|---|
 | **Deactivate / Activate** | Turns every shortcut off or back on. Kemper stays running, and the choice is remembered after a restart |
 | **Quit** | Stops Kemper completely. Shortcuts stop working until you start it again |
-| **Start with Windows** | Starts Kemper, hidden, every time you sign in to Windows |
+| **Start with Windows** (**Start at login** on macOS and Linux) | Starts Kemper, hidden, every time you sign in |
 | **Desktop shortcut** | Puts a *Kemper* shortcut, with Kemper's icon, on your desktop. Double-clicking it opens Kemper |
 | **Appearance** | System follows your Windows light or dark setting as it changes. Light and Dark force one look |
 | **Quick picker** switch | Turns the [quick picker](#quick-picker) on or off |
@@ -286,11 +324,11 @@ It checks:
 
 ### `--autostart on|off`
 
-Starts Kemper when you sign in to Windows, or stops doing so. This is the same as the **Start with Windows** switch in the window.
+Starts Kemper when you sign in, or stops doing so. This is the same as the **Start with Windows** (or **Start at login**) switch in the window.
 
 ```console
 > python kemper.pyw --autostart on
-Kemper will start when you sign in to Windows.
+Kemper will start when you sign in.
 ```
 
 ### `--desktop on|off`
@@ -342,7 +380,9 @@ Punctuation follows your keyboard layout. A character that needs Shift, like `!`
 
 A combo without a modifier (just `F9`, say) is allowed, but that key stops doing anything else everywhere while Kemper runs. Avoid plain letters and digits.
 
-**Combos Windows keeps for itself.** Some combos are already owned by Windows or another app, for example many `Win + …` combos, `Ctrl + Alt + Delete` and `Alt + Tab`. Kemper can't take those. The window shows a red notice naming them, and `--doctor` lists them.
+**Combos the system keeps for itself.** Some combos are already owned by the system or another app, for example many `Win + …` combos and `Ctrl + Alt + Delete` on Windows, or Super combos your Linux desktop uses. Kemper can't take those. The window shows a red notice naming them, and on Windows `--doctor` lists them. On macOS, Kemper sees keys before other apps do, so pick combos that don't clash with ones you use, like Cmd + C.
+
+Punctuation keys follow your keyboard layout on Windows. On macOS and Linux, `--add` and keypacks name them as on a US keyboard; in the window you simply press the key.
 
 ## What text can be typed
 
@@ -352,7 +392,15 @@ A line break in the text presses Enter. The window's text field is single-line, 
 
 ## Settings file
 
-Kemper keeps its settings in `%APPDATA%\Kemper\mappings.json` (usually `C:\Users\<you>\AppData\Roaming\Kemper\mappings.json`):
+Kemper keeps its settings in `mappings.json`, in each system's usual place:
+
+| System | Folder |
+|---|---|
+| Windows | `%APPDATA%\Kemper` (usually `C:\Users\<you>\AppData\Roaming\Kemper`) |
+| macOS | `~/Library/Application Support/Kemper` |
+| Linux | `~/.config/kemper` (or `$XDG_CONFIG_HOME/kemper`) |
+
+Set the `KEMPER_HOME` environment variable to use another folder. `--status` shows which one is in use.
 
 ```json
 {
@@ -369,7 +417,7 @@ Kemper keeps its settings in `%APPDATA%\Kemper\mappings.json` (usually `C:\Users
 | Field | Meaning |
 |---|---|
 | `mods` | Any of `Ctrl`, `Alt`, `Shift`, `Win` |
-| `vk` | The Windows [virtual-key code](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes) of the key (50 is `2`) |
+| `vk` | The key, as a Windows [virtual-key code](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes) on every system (50 is `2`), so settings move between systems |
 | `key` | The key's name, shown in the window |
 | `text` | What gets typed |
 | `appearance` | `system`, `light` or `dark` |
@@ -381,10 +429,17 @@ You can edit the file by hand. Afterwards, restart Kemper, or run any setting co
 ## Running in the background and at startup
 
 - Closing the window hides it. Kemper keeps running until you click **Quit** or run `--quit`.
-- **Start with Windows** adds an entry under `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` named `Kemper`. It runs `pythonw.exe "<path>\kemper.pyw" --hidden`. No admin rights are needed, and only your user account is affected.
+- Starting at sign-in runs `kemper.pyw --hidden` with the Python that set it up. No admin rights are needed, and only your user account is affected. Where it's recorded:
+
+  | System | Entry |
+  |---|---|
+  | Windows | `Kemper` under `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` |
+  | macOS | `~/Library/LaunchAgents/in.talken.kemper.plist` |
+  | Linux | `~/.config/autostart/kemper.desktop` |
+
 - Only one Kemper runs at a time. A second launch tells the first one to show its window, then exits.
 
-Why not a Windows *service*? Services run in an isolated session that can't see your keyboard or type into your apps, so a hotkey tool can't be one. Starting at login is the standard way to do it.
+Why not a *service* (or daemon)? Services run outside your desktop session, where they can't see your keyboard or type into your apps, so a hotkey tool can't be one. Starting at sign-in is the standard way to do it.
 
 ## Uninstalling
 
@@ -394,15 +449,15 @@ python kemper.pyw --uninstall
 
 After you confirm, Kemper:
 1. stops the running Kemper,
-2. removes its Windows startup entry and its desktop shortcut, and unlinks `.kmppck` files,
-3. deletes `%APPDATA%\Kemper` (your shortcuts, settings and Kemper's icon file),
+2. removes its startup entry and its desktop shortcut, and unlinks `.kmppck` files,
+3. deletes its [settings folder](#settings-file) (your shortcuts, settings and Kemper's icon file),
 4. deletes `kemper.pyw` itself.
 
-It touches nothing else; keypack files you've saved stay where they are. pywebview stays installed because other programs may use it; remove it with `python -m pip uninstall pywebview` if you like. Add `--yes` to skip the confirmation.
+It touches nothing else; keypack files you've saved stay where they are. Python libraries stay installed because other programs may use them. If you made a `~/.kemper` environment on macOS or Linux, delete that folder too. Add `--yes` to skip the confirmation.
 
 ## How Kemper works
 
-Kemper is one Python file with no dependencies beyond the standard library and pywebview.
+Kemper is one Python file. Besides the standard library it uses pywebview for the window, plus pynput on macOS and python-xlib on Linux. Everything that touches the operating system sits in one block per system, behind the same set of functions, so the rest of Kemper is identical everywhere. This section describes Windows first, then [what differs on macOS and Linux](#on-macos-and-linux).
 
 ```
  your key press ──► Windows hotkey (RegisterHotKey) ──► Kemper's listener thread
@@ -421,6 +476,19 @@ Kemper is one Python file with no dependencies beyond the standard library and p
 - **Quick picker.** A second, borderless window that's created hidden and registered under its own hotkey. When the combo fires, Kemper remembers which window had focus, puts the panel by the mouse and shows it. When you pick, Kemper hides the panel, gives focus back to that window and types the text there, the same way as a normal shortcut.
 - **Settings** are validated on the Python side before saving, whatever the UI or CLI sent.
 
+### On macOS and Linux
+
+- **Keys are stored the same way everywhere,** as Windows virtual-key codes. Tables inside `kemper.pyw` translate them to macOS key codes and X11 keysyms.
+- **macOS:**
+  - Hotkeys come from a Quartz event tap, created through pynput. Kemper checks each key press there and drops its own combos, so the app in front never sees them.
+  - Typing uses Quartz Unicode key events.
+  - This is why macOS asks for Input Monitoring and Accessibility.
+- **Linux:**
+  - Hotkeys are X11 key grabs on the root window, so the combos go to Kemper and not the app in front. They're grabbed with every Caps Lock and Num Lock state so those don't matter.
+  - Typing uses the X11 test extension through python-xlib, the same way `xdotool` works: a character missing from the keyboard layout gets a spare key code mapped to it for a moment.
+  - Wayland sessions don't allow global key grabs at all, which is why Kemper needs Xorg.
+- **Start at sign-in, the desktop shortcut and `.kmppck` files** use each system's standard places: LaunchAgents on macOS, and XDG autostart, `.desktop` files and the shared MIME database on Linux.
+
 ## Troubleshooting
 
 Start with `python kemper.pyw --doctor`. It catches most problems and prints the fix.
@@ -431,7 +499,10 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 | Red notice: *"Already used by another app"* | Pick different keys for the shortcuts it names. |
 | The window doesn't open | Run `python kemper.pyw` from a terminal to see the error. Usually pywebview or WebView2 is missing (`--doctor`). |
 | *"Kemper is already running"* with `--cli` | Stop the window version with `--quit`, then start `--cli`. |
-| Kemper doesn't start at sign-in | Switch **Start with Windows** off and on again (or run `--autostart on`). The startup entry may point to an old location of the file. |
+| Kemper doesn't start at sign-in | Switch **Start with Windows** / **Start at login** off and on again (or run `--autostart on`). The startup entry may point to an old location of the file. |
+| macOS: shortcuts do nothing | Allow Kemper's app (Terminal, or Python) under System Settings → Privacy & Security → **Accessibility** and **Input Monitoring**, then restart Kemper. `--doctor` checks Accessibility. |
+| Linux: shortcuts do nothing | You're probably in a Wayland session. Log out, choose **"Ubuntu on Xorg"** with the gear on the login screen, and log in again. `--doctor` tells you which session you're in. |
+| Linux: Copy instructions doesn't copy | Install a clipboard tool: `sudo apt install xclip`. |
 | The quick picker doesn't open | It needs the window version of Kemper, not `--cli`. Check that it's switched on and that its combo isn't red or taken (`--doctor`). |
 | Double-clicking a `.kmppck` doesn't open Kemper | Open Kemper's window once; it links the file type. If Windows asks which app to use, pick Kemper's. `--doctor` shows whether the link is in place. |
 | *"This keypack was made by a newer Kemper"* | Update `kemper.pyw` from the [releases page](https://github.com/Shashwat-Gupta57/Kemper/releases). |
@@ -441,9 +512,10 @@ Start with `python kemper.pyw --doctor`. It catches most problems and prints the
 
 ## Limits
 
-- Windows only.
-- Shortcuts can't type into apps running as administrator unless Kemper runs as administrator too.
-- Combos already owned by Windows or another app can't be used.
+- Linux needs an X11 (Xorg) session; Wayland doesn't allow global hotkeys.
+- On macOS there's no desktop shortcut and no double-click for `.kmppck` files (use **Import a keypack…**).
+- On Windows, shortcuts can't type into apps running as administrator unless Kemper runs as administrator too.
+- Combos already owned by the system or another app can't be used.
 - There's no tray icon. Run `kemper.pyw` or `--show` to open the window.
 - The quick picker and keypacks need the window version; they're off in `--cli` mode.
 - The window's text field is single-line. Multi-line text works through the settings file.
@@ -463,7 +535,7 @@ python test_kemper.py
 - Unicode encoding
 - the CLI, run end to end against a throwaway settings folder
 
-It runs on Windows with no GUI, and CI runs it on every push. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+It needs no GUI or display, and CI runs it on Windows, macOS and Linux on every push. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Code layout inside `kemper.pyw`, top to bottom:
 - Win32 input: hotkeys and typing
